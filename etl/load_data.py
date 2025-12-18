@@ -1,10 +1,19 @@
 from cassandra.cluster import Cluster
+from cassandra.auth import PlainTextAuthProvider
 
-cluster = Cluster(['192.168.0.24'])
-print("Starting Cassandra cluster...")
-session = cluster.connect()
-session.set_keyspace('air_quality')
+auth_provider = PlainTextAuthProvider(
+    username= 'cassandra', password='TwojeSuperTrudneHaslo123!'
+    )
 
+node_ips= ['34.118.23.223']
 
-session.shutdown()
-print("Cassandra cluster shutdown")
+try:
+    cluster = Cluster(node_ips, auth_provider=auth_provider)
+    print("Starting Cassandra cluster...")
+    session = cluster.connect()
+    session.set_keyspace('air_quality')
+
+    session.shutdown()
+    print("Cassandra cluster shutdown")
+finally:
+    print("End of script")
