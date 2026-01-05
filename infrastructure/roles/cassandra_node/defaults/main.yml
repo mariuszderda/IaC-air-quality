@@ -1,0 +1,6 @@
+---
+# Domyślne zmienne dla konfiguracji Cassandry
+cassandra_cluster_name: "CassandraAnsibleCluster"
+cassandra_seeds: "{{ internal_ip_address }}"
+cassandra_endpoint_snitch: "GossipingPropertyFileSnitch"
+cassandra_num_tokens: 16

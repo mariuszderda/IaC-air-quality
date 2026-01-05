@@ -1,0 +1,60 @@
+---
+- name: Playbook do konfiguracji sieci VPC i zapory w GCP
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  vars_files:
+    - ../vars/main.yml
+
+  tasks:
+    - name: Tworzenie nowej sieci VPC dla Cassandry
+      google.cloud.gcp_compute_network:
+        name: "{{ gcp_new_network_name }}"
+        auto_create_subnetworks: true
+        project: "{{ gcp_project_id }}"
+        auth_kind: "serviceaccount"
+        service_account_file: "{{ gcp_service_account_file }}"
+        state: present
+
+    - name: Tworzenie reguły firewalla zezwalającej na ruch SSH
+      google.cloud.gcp_compute_firewall:
+        name: "{{ gcp_new_network_name }}-allow-ssh"
+        network:
+          name: "{{ gcp_new_network_name }}"
+        allowed:
+          - ip_protocol: tcp
+            ports: ['22']
+        source_ranges: ['0.0.0.0/0']
+        project: "{{ gcp_project_id }}"
+        auth_kind: "serviceaccount"
+        service_account_file: "{{ gcp_service_account_file }}"
+        state: present
+
+    - name: Tworzenie reguły firewalla zezwalającej na ruch wewnątrz klastra Cassandra
+      google.cloud.gcp_compute_firewall:
+        name: "{{ gcp_new_network_name }}-allow-cassandra-internal"
+        network:
+          name: "{{ gcp_new_network_name }}"
+        allowed:
+          - ip_protocol: tcp
+            ports: ['7000', '7001', '9042', '7199']
+        source_tags: ['cassandra-node']
+        project: "{{ gcp_project_id }}"
+        auth_kind: "serviceaccount"
+        service_account_file: "{{ gcp_service_account_file }}"
+        state: present
+
+    - name: Tworzenie reguły firewalla zezwalającej na ruch z zewnątrz (CQL)
+      google.cloud.gcp_compute_firewall:
+        name: "{{ gcp_new_network_name }}-allow-cassandra-external"
+        network:
+          name: "{{ gcp_new_network_name }}"
+        allowed:
+          - ip_protocol: tcp
+            ports: ['9042']
+        source_ranges: ['0.0.0.0/0'] # Ogranicz w razie potrzeby
+        project: "{{ gcp_project_id }}"
+        auth_kind: "serviceaccount"
+        service_account_file: "{{ gcp_service_account_file }}"
+        state: present

@@ -1,0 +1,152 @@
+---
+- name: Pobierz wewnętrzny adres IP maszyny
+  ansible.builtin.shell: "hostname -I | awk '{print $1}'"
+  register: internal_ip
+  changed_when: false
+  tags: [ cassandra ]
+
+- name: Ustaw fakt z wewnętrznym adresem IP
+  ansible.builtin.set_fact:
+    internal_ip_address: "{{ internal_ip.stdout }}"
+  tags: [ cassandra ]
+
+- name: Ustaw SELinux w tryb Permissive, aby zapobiec blokowaniu komunikacji
+  ansible.posix.selinux:
+    policy: targeted
+    state: permissive
+  tags: [ system, cassandra ]
+
+- name: Upewnienie się, że stary, błędny plik repozytorium Cassandry jest usunięty
+  ansible.builtin.file:
+    path: /etc/yum.repos.d/cassandra.repo
+    state: absent
+  tags: [ system, cassandra, cassandra-install ]
+
+- name: Zabijanie wszystkich aktywnych procesów dnf/yum, aby zapobiec blokadom
+  ansible.builtin.command: pkill -9 -f "(dnf|yum)"
+  args:
+    warn: false
+  failed_when: false # Nie traktuj braku procesów jako błędu
+  changed_when: false
+  tags: [ system, cassandra, cassandra-install ]
+
+- name: Wyczyść pamięć podręczną dnf
+  ansible.builtin.command: dnf clean all
+  changed_when: false
+  tags: [ system, cassandra, cassandra-install ]
+
+- name: Aktualizacja wszystkich pakietów systemowych
+  ansible.builtin.dnf:
+    name: '*'
+    state: latest
+  tags: [ system, cassandra ]
+
+- name: Instalacja OpenJDK 11
+  ansible.builtin.dnf:
+    name: java-11-openjdk-devel
+    state: present
+  tags: [ cassandra, cassandra-install ]
+
+- name: Instalacja chkconfig i initscripts (dla zarządzania usługami)
+  ansible.builtin.dnf:
+    name:
+      - chkconfig
+      - initscripts
+    state: present
+  tags: [ system, cassandra, cassandra-install ]
+
+- name: Dodanie poprawnego repozytorium Apache Cassandra
+  ansible.builtin.yum_repository:
+    name: cassandra
+    description: Apache Cassandra
+    baseurl: https://apache.jfrog.io/artifactory/cassandra-rpm/41x/
+    gpgcheck: yes
+    repo_gpgcheck: yes
+    gpgkey: https://www.apache.org/dist/cassandra/KEYS
+    enabled: yes
+    state: present
+  tags: [ cassandra, cassandra-install ]
+
+- name: Przebudowa pamięci podręcznej dnf, aby uwzględnić nowe repozytorium
+  ansible.builtin.command: dnf -y makecache --refresh
+  changed_when: false
+  tags: [ cassandra, cassandra-install ]
+
+- name: Instalacja pakietu Cassandra
+  ansible.builtin.dnf:
+    name: cassandra
+    state: present
+  tags: [ cassandra, cassandra-install ]
+
+- name: Przeładowanie demona systemd po instalacji pakietu
+  ansible.builtin.command: systemctl daemon-reload
+  changed_when: true # Zawsze zakładamy, że coś się zmieniło
+  tags: [ cassandra, cassandra-install ]
+
+- name: Zatrzymanie usługi Cassandra przed zmianą konfiguracji
+
+  ansible.builtin.service:
+
+    name: cassandra
+
+    state: stopped
+
+  tags: [cassandra, cassandra-configure]
+
+  when: is_initial_cluster_setup | default(false)
+
+
+
+- name: Wyczyść katalog danych Cassandry, aby rozwiązać konflikt nazwy klastra
+
+  ansible.builtin.file:
+
+    path: /var/lib/cassandra/data
+
+    state: absent
+
+  tags: [cassandra, cassandra-configure]
+
+  when: is_initial_cluster_setup | default(false)
+
+
+
+- name: Utwórz ponownie pusty katalog danych Cassandry
+
+  ansible.builtin.file:
+
+    path: /var/lib/cassandra/data
+
+    state: directory
+
+    owner: cassandra
+
+    group: cassandra
+
+    mode: '0755'
+
+  tags: [cassandra, cassandra-configure]
+
+  when: is_initial_cluster_setup | default(false)
+
+- name: Wdrożenie pliku konfiguracyjnego cassandra.yaml z szablonu
+  ansible.builtin.template:
+    src: cassandra.yaml.j2
+    dest: /etc/cassandra/conf/cassandra.yaml
+    owner: cassandra
+    group: cassandra
+    mode: '0644'
+  notify: Restart Cassandra
+  tags: [ cassandra, cassandra-configure ]
+
+- name: Upewnienie się, że usługa Cassandra jest włączona przy starcie
+  ansible.builtin.service:
+    name: cassandra
+    enabled: yes
+  tags: [ cassandra, cassandra-service ]
+
+- name: Upewnienie się, że usługa Cassandra jest uruchomiona
+  ansible.builtin.service:
+    name: cassandra
+    state: started
+  tags: [ cassandra, cassandra-service ]

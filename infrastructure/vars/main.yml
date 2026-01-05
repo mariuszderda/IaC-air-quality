@@ -1,0 +1,23 @@
+---
+# Definicje zmiennych dla maszyny wirtualnej w GCP
+gcp_project_id: "cassandra-cluster-483113"
+gcp_service_account_file: "../klucz-serwisowy.json" # Umieść ten plik w głównym katalogu projektu
+gcp_zone: "{{ gcp_region }}-a" # Strefa w ramach wybranego regionu (np. europe-central2-a)
+gcp_region: "europe-central2" # Główny region GCP (np. europe-central2 dla Warszawy)
+
+gcp_instance_name: "rocky-cassandra"
+gcp_machine_type: "e2-standard-2"
+gcp_disk_size_gb: 20
+gcp_disk_type: "pd-ssd"
+gcp_source_image: "projects/rocky-linux-cloud/global/images/family/rocky-linux-9-optimized-gcp" 
+# Nazwa nowej, dedykowanej sieci VPC
+gcp_new_network_name: "cassandra-net"
+
+# Nazwa dla statycznego zewnętrznego adresu IP
+gcp_external_ip_name: "cassandra-static-ip"
+
+
+# Zmienne do dynamicznego inwentarza
+gcp_inventory_file: "../gcp_inventory.ini"
+gcp_ssh_private_key_file: "~/.ssh/databasecassandra" # Ścieżka do Twojego klucza prywatnego SSH
+gcp_ssh_user: "databasecassandra" # Domyślny użytkownik dla obrazów Rocky Linux w GCP

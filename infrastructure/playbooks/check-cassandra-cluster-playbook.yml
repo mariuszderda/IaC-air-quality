@@ -1,0 +1,16 @@
+---
+- name: Sprawdzenie statusu klastra Cassandra
+  hosts: gcp_vms[0] # Celuje w pierwszy węzeł klastra
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: Uruchom nodetool status
+      ansible.builtin.command: "nodetool status"
+      register: nodetool_status
+      changed_when: false
+      failed_when: "'UN' not in nodetool_status.stdout"
+
+    - name: Wyświetl status klastra
+      ansible.builtin.debug:
+        msg: "{{ nodetool_status.stdout_lines }}"
