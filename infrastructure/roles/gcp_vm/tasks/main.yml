@@ -1,0 +1,56 @@
+---
+- name: Tworzenie instancji maszyny wirtualnej w GCP
+  google.cloud.gcp_compute_instance:
+    name: "{{ gcp_instance_name }}"
+    machine_type: "{{ gcp_machine_type }}"
+    disks:
+      - auto_delete: true
+        boot: true
+        initialize_params:
+          source_image: "{{ gcp_source_image }}"
+          disk_size_gb: "{{ gcp_disk_size_gb }}"
+          disk_type: "{{ gcp_disk_type }}"
+    network_interfaces:
+      - network:
+          name: "{{ gcp_new_network_name }}"
+        access_configs: # Przypisanie statycznego publicznego adresu IP
+          - name: 'External NAT'
+            type: 'ONE_TO_ONE_NAT'
+            nat_ip:
+              address: "{{ gcp_static_ip_address }}"
+    zone: "{{ gcp_zone }}"
+    project: "{{ gcp_project_id }}"
+    auth_kind: "serviceaccount"
+    service_account_file: "{{ gcp_service_account_file }}"
+    state: "present"
+    tags:
+      items:
+        - cassandra-node
+  register: gcp_instance
+
+- name: Wyświetlanie informacji o utworzonej maszynie
+  debug:
+    msg: "Utworzono maszynę '{{ gcp_instance.name }}' z zewnętrznym adresem IP: {{ gcp_static_ip_address }}"
+  when: gcp_instance is defined and gcp_instance.changed
+
+- name: Zapewnienie istnienia grupy [gcp_vms] w pliku inwentarza
+  ansible.builtin.lineinfile:
+    path: "{{ gcp_inventory_file }}"
+    line: "[gcp_vms]"
+    create: yes
+  when: gcp_instance.changed
+
+- name: Dodawanie nowego hosta do inwentarza GCP
+  ansible.builtin.lineinfile:
+    path: "{{ gcp_inventory_file }}"
+    line: "{{ gcp_static_ip_address }} ansible_user={{ gcp_ssh_user }} ansible_ssh_private_key_file={{ gcp_ssh_private_key_file }}"
+    insertafter: "[gcp_vms]"
+  when: gcp_instance.changed
+
+- name: Oczekiwanie na dostępność portu SSH
+  ansible.builtin.wait_for:
+    host: "{{ gcp_static_ip_address }}"
+    port: 22
+    delay: 10
+    timeout: 60
+  when: gcp_instance.changed

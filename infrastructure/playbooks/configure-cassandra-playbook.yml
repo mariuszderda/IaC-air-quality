@@ -1,0 +1,49 @@
+---
+- name: Pobranie adresu IP pierwszego węzła Cassandra (seed)
+  hosts: gcp_vms[0]
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Pobierz wewnętrzny adres IP maszyny
+      ansible.builtin.shell: "hostname -I | awk '{print $1}'"
+      register: internal_ip
+      changed_when: false
+
+    - name: Ustaw fakt z adresem IP pierwszego węzła (seed)
+      ansible.builtin.set_fact:
+        cassandra_seed_ip: "{{ internal_ip.stdout }}"
+        cacheable: yes
+
+- name: Pobranie adresu IP ostatniego węzła Cassandra (jeśli jest więcej niż 3)
+  hosts: gcp_vms[-1]
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Pobierz wewnętrzny adres IP maszyny
+      ansible.builtin.shell: "hostname -I | awk '{print $1}'"
+      register: internal_ip
+      changed_when: false
+      when: groups['gcp_vms'] | length > 3
+
+    - name: Ustaw fakt z adresem IP ostatniego węzła (seed)
+      ansible.builtin.set_fact:
+        last_node_ip: "{{ internal_ip.stdout }}"
+        cacheable: yes
+      when: groups['gcp_vms'] | length > 3
+
+- name: Instalacja i konfiguracja węzła Apache Cassandra
+  hosts: gcp_vms # Celuje w hosty z dynamicznego inwentarza gcp_inventory.ini
+  become: yes # Użyj sudo do instalacji i konfiguracji
+  gather_facts: no # Wyłączamy automatyczne zbieranie faktów
+
+  vars:
+    # Dynamiczne tworzenie listy seedów. Jeśli jest >3 hostów, dodaj ostatni.
+    cassandra_seeds: "{{ hostvars[groups['gcp_vms'][0]]['cassandra_seed_ip'] }}{{ ',' + hostvars[groups['gcp_vms'][-1]]['last_node_ip'] if groups['gcp_vms'] | length > 3 else '' }}"
+    is_initial_cluster_setup: true
+
+  tasks:
+    - name: Gather facts manually
+      ansible.builtin.setup:
+
+  roles:
+    - cassandra_node

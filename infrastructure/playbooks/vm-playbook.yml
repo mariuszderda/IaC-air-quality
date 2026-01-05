@@ -1,0 +1,26 @@
+---
+- name: Playbook do tworzenia maszyny wirtualnej ze statycznym IP
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  vars_files:
+    - ../vars/main.yml
+
+  pre_tasks:
+    - name: Tworzenie statycznego zewnętrznego adresu IP dla nowej maszyny
+      google.cloud.gcp_compute_address:
+        name: "{{ gcp_external_ip_name }}"
+        region: "{{ gcp_region }}"
+        project: "{{ gcp_project_id }}"
+        auth_kind: "serviceaccount"
+        service_account_file: "{{ gcp_service_account_file }}"
+        state: present
+      register: gcp_static_ip
+
+    - name: Ustawienie faktu z adresem statycznego IP
+      ansible.builtin.set_fact:
+        gcp_static_ip_address: "{{ gcp_static_ip.address }}"
+
+  roles:
+    - gcp_vm

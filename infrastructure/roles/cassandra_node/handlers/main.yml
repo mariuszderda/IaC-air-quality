@@ -1,0 +1,5 @@
+---
+- name: Restart Cassandra
+  ansible.builtin.service:
+    name: cassandra
+    state: restarted
