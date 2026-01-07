@@ -18,17 +18,18 @@
   hosts: gcp_vms[-1]
   become: yes
   gather_facts: no
-  when: groups['gcp_vms'] | length > 3
   tasks:
     - name: Pobierz wewnętrzny adres IP maszyny
       ansible.builtin.shell: "hostname -I | awk '{print $1}'"
       register: internal_ip
       changed_when: false
+      when: groups['gcp_vms'] | length > 3
 
     - name: Ustaw fakt z adresem IP ostatniego węzła (seed)
       ansible.builtin.set_fact:
         last_node_ip: "{{ internal_ip.stdout }}"
         cacheable: yes
+      when: groups['gcp_vms'] | length > 3
 
 - name: Dodawanie i konfiguracja NOWEGO węzła Apache Cassandra
   hosts: all # Ten playbook uruchamiaj z opcją --limit, aby celować tylko w nowy węzeł
