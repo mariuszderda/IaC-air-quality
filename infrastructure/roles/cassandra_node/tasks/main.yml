@@ -1,13 +1,7 @@
 ---
-- name: Pobierz wewnętrzny adres IP maszyny
-  ansible.builtin.shell: "hostname -I | awk '{print $1}'"
-  register: internal_ip
-  changed_when: false
-  tags: [ cassandra ]
-
 - name: Ustaw fakt z wewnętrznym adresem IP
   ansible.builtin.set_fact:
-    internal_ip_address: "{{ internal_ip.stdout }}"
+    internal_ip_address: "{{ (ansible_facts.all_ipv4_addresses | default([])) | select('match', '^10\\.') | first | default(ansible_default_ipv4.address) }}"
   tags: [ cassandra ]
 
 - name: Ustaw SELinux w tryb Permissive, aby zapobiec blokowaniu komunikacji
@@ -22,12 +16,12 @@
     state: absent
   tags: [ system, cassandra, cassandra-install ]
 
-- name: Zabijanie wszystkich aktywnych procesów dnf/yum, aby zapobiec blokadom
-  ansible.builtin.command: pkill -9 -f "(dnf|yum)"
-  args:
-    warn: false
-  failed_when: false # Nie traktuj braku procesów jako błędu
-  changed_when: false
+- name: Czekaj na zwolnienie blokady dnf/yum
+  ansible.builtin.wait_for:
+    path: /var/cache/dnf/metadata_lock.pid
+    state: absent
+    timeout: 300 # Czekaj do 5 minut
+    delay: 10   # Sprawdzaj co 10 sekund
   tags: [ system, cassandra, cassandra-install ]
 
 - name: Wyczyść pamięć podręczną dnf
@@ -132,7 +126,17 @@
 - name: Wdrożenie pliku konfiguracyjnego cassandra.yaml z szablonu
   ansible.builtin.template:
     src: cassandra.yaml.j2
-    dest: /etc/cassandra/conf/cassandra.yaml
+    dest: /etc/cassandra/default.conf/cassandra.yaml
+    owner: cassandra
+    group: cassandra
+    mode: '0644'
+  notify: Restart Cassandra
+  tags: [ cassandra, cassandra-configure ]
+
+- name: Wdrożenie pliku konfiguracyjnego cassandra-rackdc.properties z szablonu
+  ansible.builtin.template:
+    src: cassandra-rackdc.properties.j2
+    dest: /etc/cassandra/default.conf/cassandra-rackdc.properties
     owner: cassandra
     group: cassandra
     mode: '0644'
