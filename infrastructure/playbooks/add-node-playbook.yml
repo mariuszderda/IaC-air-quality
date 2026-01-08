@@ -1,49 +1,52 @@
 ---
-- name: Pobranie adresu IP pierwszego węzła Cassandra (seed)
-  hosts: gcp_vms[0]
-  become: yes
-  gather_facts: no
-  tasks:
-    - name: Pobierz wewnętrzny adres IP maszyny
-      ansible.builtin.shell: "hostname -I | awk '{print $1}'"
-      register: internal_ip
-      changed_when: false
-
-    - name: Ustaw fakt z adresem IP pierwszego węzła (seed)
-      ansible.builtin.set_fact:
-        cassandra_seed_ip: "{{ internal_ip.stdout }}"
-        cacheable: yes
-
-- name: Pobranie adresu IP ostatniego węzła Cassandra (jeśli jest więcej niż 3)
-  hosts: gcp_vms[-1]
-  become: yes
-  gather_facts: no
-  tasks:
-    - name: Pobierz wewnętrzny adres IP maszyny
-      ansible.builtin.shell: "hostname -I | awk '{print $1}'"
-      register: internal_ip
-      changed_when: false
-      when: groups['gcp_vms'] | length > 3
-
-    - name: Ustaw fakt z adresem IP ostatniego węzła (seed)
-      ansible.builtin.set_fact:
-        last_node_ip: "{{ internal_ip.stdout }}"
-        cacheable: yes
-      when: groups['gcp_vms'] | length > 3
-
 - name: Dodawanie i konfiguracja NOWEGO węzła Apache Cassandra
-  hosts: all # Ten playbook uruchamiaj z opcją --limit, aby celować tylko w nowy węzeł
+  hosts: all # Uruchamiaj z --limit, aby celować tylko w nowy węzeł
   become: yes
-  gather_facts: no
+  gather_facts: true # Wyłączamy globalne zbieranie faktów dla wydajności
 
-  vars:
-    # Dynamiczne tworzenie listy seedów. Jeśli jest >3 hostów, dodaj ostatni.
-    cassandra_seeds: "{{ hostvars[groups['gcp_vms'][0]]['cassandra_seed_ip'] }}{{ ',' + hostvars[groups['gcp_vms'][-1]]['last_node_ip'] if groups['gcp_vms'] | length > 3 else '' }}"
-    # is_initial_cluster_setup jest celowo pominięte (domyślnie false)
+  pre_tasks:
+    - name: Określ listę istniejących węzłów w klastrze
+      ansible.builtin.set_fact:
+        existing_hosts: "{{ groups['gcp_vms'] | difference(ansible_play_hosts_all) }}"
+      run_once: true
 
   tasks:
-    - name: Gather facts manually
-      ansible.builtin.setup:
+    - name: Pobierz wewnętrzny adres IP pierwszego węzła (seed)
+      ansible.builtin.shell: "hostname -I | xargs -n1 | grep '^10\\.' | head -n1"
+      register: first_seed_ip_result
+      delegate_to: "{{ existing_hosts[0] }}"
+      run_once: true
+      changed_when: false
+      become: yes
+      when: existing_hosts | length > 0
 
-  roles:
-    - cassandra_node
+    - name: Pobierz wewnętrzny adres IP ostatniego węzła (jeśli jest więcej niż 3)
+      ansible.builtin.shell: "hostname -I | xargs -n1 | grep '^10\\.' | head -n1"
+      register: last_seed_ip_result
+      delegate_to: "{{ existing_hosts[-1] }}"
+      run_once: true
+      changed_when: false
+      when: "existing_hosts | length > 3"
+      become: yes
+
+    - name: Zbuduj listę seedów
+      ansible.builtin.set_fact:
+        seed_list: >-
+          {{
+            [first_seed_ip_result.stdout] +
+            ([last_seed_ip_result.stdout] if last_seed_ip_result is defined and not last_seed_ip_result.skipped|default(false) else [])
+          }}
+      run_once: true
+
+    - name: Wyświetl listę seedów (dla debugowania)
+      ansible.builtin.debug:
+        msg: "Lista seedów Cassandry: {{ seed_list | join(',') }}"
+      run_once: true
+
+    # Uruchomienie roli cassandra_node na docelowym węźle (lub węzłach)
+    # Zmienna `cassandra_seeds` jest jawnie przekazywana do roli
+    - name: Konfiguruj węzeł Cassandra
+      ansible.builtin.include_role:
+        name: cassandra_node
+      vars:
+        cassandra_seeds: "{{ seed_list | join(',') }}"
