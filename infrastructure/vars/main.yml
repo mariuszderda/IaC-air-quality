@@ -3,11 +3,11 @@
 gcp_project_id: "cassandra-cluster-483113"
 gcp_service_account_file: "../klucz-serwisowy.json" # Umieść ten plik w głównym katalogu projektu
 gcp_zone: "{{ gcp_region }}-a" # Strefa w ramach wybranego regionu (np. europe-central2-a)
-gcp_region: "europe-central2" # Główny region GCP (np. europe-central2 dla Warszawy)
+gcp_region: "europe-west10" # Główny region GCP (np. europe-central2 dla Warszawy)
 
 gcp_instance_name: "rocky-cassandra"
 gcp_machine_type: "e2-standard-2"
-gcp_disk_size_gb: 20
+gcp_disk_size_gb: 60
 gcp_disk_type: "pd-ssd"
 gcp_source_image: "projects/rocky-linux-cloud/global/images/family/rocky-linux-9-optimized-gcp" 
 # Nazwa nowej, dedykowanej sieci VPC
