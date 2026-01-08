@@ -24,3 +24,26 @@
 
   roles:
     - gcp_vm
+
+  post_tasks:
+    - name: Ensure gcp_vms group exists
+      ansible.builtin.group_by:
+        key: gcp_vms
+      changed_when: false
+
+    - name: Ustawienie faktu z liczbą hostów
+      ansible.builtin.set_fact:
+        host_count: "{{ groups['gcp_vms'] | default([]) | length }}"
+
+    - name: Określenie numeru RACK dla nowej maszyny
+      ansible.builtin.set_fact:
+        new_rack: "{{ 'RACK1' if host_count|int < 1 else 'RACK2' }}"
+
+    - name: Dodanie nowej maszyny do pliku inwentarza gcp_inventory.ini
+      ansible.builtin.lineinfile:
+        path: "../gcp_inventory.ini"
+        line: "{{ gcp_instance_name }} ansible_host={{ gcp_static_ip_address }} ansible_user={{ gcp_ssh_user }} ansible_ssh_private_key_file={{ gcp_ssh_private_key_file }} cassandra_dc=DC1 cassandra_rack={{ new_rack }}"
+        create: yes
+        insertafter: '\[gcp_vms\]'
+        regexp: "^{{ gcp_instance_name }}\\s.*$" # Zapobiega duplikatom, dopasowując linię zaczynającą się od nazwy hosta
+      delegate_to: localhost
