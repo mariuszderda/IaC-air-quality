@@ -1,0 +1,190 @@
+---
+- name: Optymalizacja Cassandra OS, JVM i Aplikacji
+  hosts: all
+  become: yes
+  gather_facts: true
+  serial: 1
+  vars:
+    cassandra_config_path: /etc/cassandra/default.conf/cassandra.yaml
+    cassandra_jvm_options_path: /etc/cassandra/default.conf/jvm11-server.options
+    cassandra_rackdc_path: /etc/cassandra/default.conf/cassandra-rackdc.properties
+    limits_config_path: /etc/security/limits.conf
+    sysctl_config_path: /etc/sysctl.conf
+    fstab_path: /etc/fstab
+
+  pre_tasks:
+    - name: "[Setup] Zbierz fakty o systemie plików"
+      ansible.builtin.setup:
+        filter:
+          - "ansible_mounts"
+      tags: [always]
+
+    - name: "[Setup] Dynamiczne wykryj urządzenie dla partycji root ('/')"
+      ansible.builtin.set_fact:
+        root_device: "{{ item.device }}"
+      loop: "{{ ansible_mounts }}"
+      when: item.mount == "/"
+      tags: [always]
+
+  tasks:
+    # --- 1. Konfiguracja Systemu Operacyjnego ---
+    - name: "[OS] Ustawianie parametrów jądra (sysctl)"
+      ansible.posix.sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_file: "{{ sysctl_config_path }}"
+        reload: yes
+      loop:
+        - { key: 'vm.swappiness', value: '1' }
+        - { key: 'vm.max_map_count', value: '1048575' }
+        - { key: 'vm.zone_reclaim_mode', value: '0' }
+        - { key: 'net.core.rmem_max', value: '16777216' }
+        - { key: 'net.core.wmem_max', value: '16777216' }
+        - { key: 'net.ipv4.tcp_window_scaling', value: '1' }
+      tags: [os, sysctl]
+      notify: Reboot machine
+
+    - name: "[OS] Zwiększenie limitów zasobów dla użytkownika cassandra"
+      ansible.builtin.lineinfile:
+        path: "{{ limits_config_path }}"
+        line: "cassandra - {{ item.name }} {{ item.value }}"
+        regexp: "^cassandra\\s+-\\s+{{ item.name }}\\s+.*$"
+        state: present
+      loop:
+        - { name: 'memlock', value: 'unlimited' }
+        - { name: 'nofile', value: '100000' }
+        - { name: 'nproc', value: '32768' }
+        - { name: 'as', value: 'unlimited' }
+      tags: [os, ulimits]
+      notify: Reboot machine
+
+    - name: "[OS] Dodanie opcji 'noatime' do montowania partycji root w /etc/fstab"
+      ansible.posix.mount:
+        path: /
+        src: "{{ root_device }}"
+        fstype: xfs
+        opts: defaults,noatime
+        state: present
+      tags: [os, fstab]
+      notify: Reboot machine
+
+    # --- 2. Konfiguracja Serwera Cassandra ---
+    - name: "[Cassandra] Zastosowanie optymalizacji w pliku cassandra.yaml"
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_config_path }}"
+        regexp: "^{{ item.key }}:.*"
+        line: "{{ item.key }}: {{ item.value }}"
+        owner: cassandra
+        group: cassandra
+      loop:
+        - { key: 'commitlog_sync', value: 'periodic' }
+        - { key: 'commitlog_segment_size', value: '64MiB' }
+        - { key: 'memtable_flush_writers', value: '4' }
+        - { key: 'concurrent_compactors', value: '2' }
+        - { key: 'compaction_throughput', value: '0MiB/s' }
+        - { key: 'concurrent_writes', value: '32' }
+      notify: Restart cassandra
+      tags: [cassandra, config]
+
+    - name: "[Cassandra] Ustawienie topologii (DC i RACK) na podstawie zmiennych z inwentarza"
+      community.general.ini_file:
+        path: "{{ cassandra_rackdc_path }}"
+        section: null
+        option: "{{ item.key }}"
+        value: "{{ item.value }}"
+        owner: cassandra
+        group: cassandra
+        create: yes
+      loop:
+        - { key: 'dc', value: "{{ cassandra_dc | default('DC1') }}" }
+        - { key: 'rack', value: "{{ cassandra_rack | default('RACK1') }}" }
+      tags: [cassandra, config]
+      notify: Restart cassandra
+
+    # --- 3. Konfiguracja JVM ---
+    - name: "[JVM] Ustawienie pamięci sterty (-Xms, -Xmx) na 4G"
+      ansible.builtin.lineinfile:
+        path: "{{ cassandra_jvm_options_path }}"
+        regexp: "^{{ item }}.*"
+        line: "{{ item }}4G"
+        owner: cassandra
+        group: cassandra
+      loop:
+        - "-Xms"
+        - "-Xmx"
+      tags: [jvm, config]
+      notify: Restart cassandra
+
+    - name: "[JVM] Włączenie Garbage Collector G1GC"
+      ansible.builtin.replace:
+        path: "{{ cassandra_jvm_options_path }}"
+        regexp: '^\s*#\s*(-XX:\+UseG1GC)\s*$'
+        replace: '\1'
+        owner: cassandra
+        group: cassandra
+      tags: [jvm, config]
+      notify: Restart cassandra
+
+    - name: "[JVM] Wyłączenie (zakomentowanie) opcji dla CMS Garbage Collector"
+      ansible.builtin.replace:
+        path: "{{ cassandra_jvm_options_path }}"
+        regexp: '^(\s*)(-XX:\+(UseConcMarkSweepGC|UseParNewGC|CMSParallelRemarkEnabled|CMSEdenChunksRecordPercent|CMSOldGenChoosenCmsGenChunksInPercent|CMSMaxAbortablePrecleanTime|CMSSamplingInterval|CMSSkipInitialMark|CMSScavengeBeforeRemark|CMSWaitDuration|CMSClassUnloadingEnabled|CMSPermGenPrealignment|CMSIsParallel|CMSSplitWork|CMSConcMark|CMSConcSwept|CMSOldGenUseParNew|UseCondCardMark|ExplicitGCInvokesConcurrent|ScavengeLivePSet|UseParNew|UseConcMarkSweepGC)).*$'
+        replace: '#\1\2'
+        owner: cassandra
+        group: cassandra
+      tags: [jvm, config]
+      notify: Restart cassandra
+
+    - name: "[JVM] Włączenie zdalnego dostępu do JMX"
+      ansible.builtin.lineinfile:
+        path: /etc/cassandra/default.conf/cassandra-env.sh
+        regexp: '^(#\s*)?LOCAL_JMX=yes'
+        line: 'LOCAL_JMX=no'
+        owner: cassandra
+        group: cassandra
+      notify: Restart cassandra
+      tags: [jvm, config]
+
+    # --- 4. Działania Runtime ---
+    - name: "[Runtime] Sprawdzenie, czy plik swap istnieje"
+      ansible.builtin.stat:
+        path: /swapfile
+      register: swap_file_stat
+      tags: [runtime, swap]
+
+    - name: "[Runtime] Włączenie SWAP (jeśli plik /swapfile istnieje)"
+      ansible.posix.mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+      when: swap_file_stat.stat.exists
+      tags: [runtime, swap]
+
+    - name: "[Runtime] Ustawienie read-ahead na 32KB (64 * 512b sectors) dla dysku"
+      ansible.builtin.command: "blockdev --setra 64 {{ root_device }}"
+      changed_when: false
+      tags: [runtime, disk]
+
+    # --- 5. Wykonanie Handlerów ---
+    - name: Wymuś wykonanie wszystkich oczekujących handlerów
+      ansible.builtin.meta: flush_handlers
+
+  # --- Definicje Handlerów ---
+  handlers:
+    - name: Restart cassandra
+      ansible.builtin.service:
+        name: cassandra
+        state: restarted
+      listen: "Restart cassandra"
+
+    - name: Reboot machine
+      ansible.builtin.reboot:
+        msg: "Reboot zainicjowany przez Ansible z powodu zmian w konfiguracji OS."
+        connect_timeout: 5
+        reboot_timeout: 600
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+        test_command: whoami
+      listen: "Reboot machine"
