@@ -1,5 +1,5 @@
 ---
-- name: Playbook do tworzenia maszyny wirtualnej ze statycznym IP
+- name: Playbook do tworzenia maszyny wirtualnej ze statycznym IP i aktualizacji inwentarza
   hosts: localhost
   connection: local
   gather_facts: no
