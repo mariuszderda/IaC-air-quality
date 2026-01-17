@@ -44,19 +44,22 @@ ansible-playbook playbooks/network-playbook.yml
 
 ### Etap 2: Stwórz maszyny (wielokrotnie)
 
-Uruchom ten playbook dla każdego węzła, który chcesz stworzyć. Za każdym razem podaj unikalną nazwę dla maszyny i jej adresu IP.
+Uruchom ten playbook dla każdego węzła, który chcesz stworzyć. Domyślnie maszyny są dodawane do grupy `database`. Możesz użyć zmiennych `ftp` lub `http`, aby dodać je do odpowiednich grup.
 
 ```bash
-# Stwórz pierwszy węzeł
+# Stwórz pierwszy węzeł (domyślnie w grupie database)
 ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=cassandra-node-1 gcp_external_ip_name=cassandra-ip-1"
 
-# Stwórz drugi węzeł
+# Stwórz drugi węzeł (domyślnie w grupie database)
 ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=cassandra-node-2 gcp_external_ip_name=cassandra-ip-2"
 
-# Stwórz trzeci węzeł
-ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=cassandra-node-3 gcp_external_ip_name=cassandra-ip-3"
+# Stwórz maszynę w grupie ftp
+ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=ftp-node-1 gcp_external_ip_name=ftp-ip-1 ftp=true"
+
+# Stwórz maszynę w grupie http
+ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=http-node-1 gcp_external_ip_name=http-ip-1 http=true"
 ```
-Po wykonaniu tych komend, plik `gcp_inventory.ini` będzie zawierał publiczne IP wszystkich trzech maszyn.
+Po wykonaniu tych komend, plik `gcp_inventory.ini` będzie zawierał publiczne IP wszystkich maszyn w odpowiednich grupach.
 
 ### Etap 3: Skonfiguruj klaster Cassandra
 
@@ -64,6 +67,14 @@ Teraz, gdy maszyny istnieją, a inwentarz jest gotowy, uruchom nowy playbook kon
 
 ```bash
 ansible-playbook -i gcp_inventory.ini playbooks/configure-cassandra-playbook.yml
+```
+
+### Etap 3b: Skonfiguruj serwer FTP (opcjonalnie)
+
+Jeśli utworzyłeś maszynę w grupie `ftp`, uruchom playbook konfiguracyjny, podając dane dla nowego użytkownika, który będzie używany do połączeń FTP.
+
+```bash
+ansible-playbook -i gcp_inventory.ini playbooks/configure-ftp-playbook.yml --extra-vars "ftp_user=nazwa_uzytkownika ftp_password=haslo_dla_ftp"
 ```
 
 **Jak to działa?**

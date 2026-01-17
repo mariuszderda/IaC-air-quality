@@ -7,7 +7,7 @@
   pre_tasks:
     - name: Określ listę istniejących węzłów w klastrze
       ansible.builtin.set_fact:
-        existing_hosts: "{{ groups['gcp_vms'] | difference(ansible_play_hosts_all) }}"
+        existing_hosts: "{{ groups['database'] | difference(ansible_play_hosts_all) }}"
       run_once: true
 
   tasks:

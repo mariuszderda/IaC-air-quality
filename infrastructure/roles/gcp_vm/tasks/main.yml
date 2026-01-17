@@ -33,10 +33,10 @@
     msg: "Utworzono maszynę '{{ gcp_instance.name }}' z zewnętrznym adresem IP: {{ gcp_static_ip_address }}"
   when: gcp_instance is defined and gcp_instance.changed
 
-- name: Zapewnienie istnienia grupy [gcp_vms] w pliku inwentarza
+- name: Zapewnienie istnienia grupy [database] w pliku inwentarza
   ansible.builtin.lineinfile:
     path: "{{ gcp_inventory_file }}"
-    line: "[gcp_vms]"
+    line: "[database]"
     create: yes
   when: gcp_instance.changed
 

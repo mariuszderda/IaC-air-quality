@@ -26,24 +26,47 @@
     - gcp_vm
 
   post_tasks:
-    - name: Ensure gcp_vms group exists
+    - name: Determine group for the new VM
+      ansible.builtin.set_fact:
+        vm_group: "{% if ftp is defined %}ftp{% elif http is defined %}http{% else %}database{% endif %}"
+
+    - name: Add new VM to the determined group in-memory
       ansible.builtin.group_by:
-        key: gcp_vms
+        key: "{{ vm_group }}"
       changed_when: false
 
-    - name: Ustawienie faktu z liczbą hostów
+    - name: Ustawienie faktu z liczbą hostów w grupie database
       ansible.builtin.set_fact:
-        host_count: "{{ groups['gcp_vms'] | default([]) | length }}"
+        host_count: "{{ groups['database'] | default([]) | length }}"
+      when: vm_group == 'database'
 
     - name: Określenie numeru RACK dla nowej maszyny
       ansible.builtin.set_fact:
         new_rack: "{{ 'RACK1' if host_count|int < 1 else 'RACK2' }}"
+      when: vm_group == 'database'
+
+    - name: Create inventory line for database group
+      ansible.builtin.set_fact:
+        inventory_line: "{{ gcp_instance_name }} ansible_host={{ gcp_static_ip_address }} ansible_user={{ gcp_ssh_user }} ansible_ssh_private_key_file={{ gcp_ssh_private_key_file }} cassandra_dc=DC1 cassandra_rack={{ new_rack }}"
+      when: vm_group == 'database'
+
+    - name: Create inventory line for other groups
+      ansible.builtin.set_fact:
+        inventory_line: "{{ gcp_instance_name }} ansible_host={{ gcp_static_ip_address }} ansible_user={{ gcp_ssh_user }} ansible_ssh_private_key_file={{ gcp_ssh_private_key_file }}"
+      when: vm_group != 'database'
+
+    - name: Ensure the inventory group header exists
+      ansible.builtin.lineinfile:
+        path: "../gcp_inventory.ini"
+        line: "[{{ vm_group }}]"
+        create: yes
+      delegate_to: localhost
 
     - name: Dodanie nowej maszyny do pliku inwentarza gcp_inventory.ini
       ansible.builtin.lineinfile:
         path: "../gcp_inventory.ini"
-        line: "{{ gcp_instance_name }} ansible_host={{ gcp_static_ip_address }} ansible_user={{ gcp_ssh_user }} ansible_ssh_private_key_file={{ gcp_ssh_private_key_file }} cassandra_dc=DC1 cassandra_rack={{ new_rack }}"
+        line: "{{ inventory_line }}"
         create: yes
-        insertafter: '\[gcp_vms\]'
-        regexp: "^{{ gcp_instance_name }}\\s.*$" # Zapobiega duplikatom, dopasowując linię zaczynającą się od nazwy hosta
+        insertafter: '\\[{{ vm_group }}\\]'
+        regexp: "^{{ gcp_instance_name }}\\s.*$"
       delegate_to: localhost

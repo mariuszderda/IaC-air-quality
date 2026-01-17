@@ -45,15 +45,43 @@
         service_account_file: "{{ gcp_service_account_file }}"
         state: present
 
-    - name: Tworzenie reguły firewalla zezwalającej na ruch z zewnątrz (CQL)
+    - name: Tworzenie reguły firewalla zezwalającej na ruch HTTP
       google.cloud.gcp_compute_firewall:
-        name: "{{ gcp_new_network_name }}-allow-cassandra-external"
+        name: "{{ gcp_new_network_name }}-allow-http"
         network:
           name: "{{ gcp_new_network_name }}"
         allowed:
           - ip_protocol: tcp
-            ports: ['9042']
-        source_ranges: ['0.0.0.0/0'] # Ogranicz w razie potrzeby
+            ports: ['80', '443']
+        source_ranges: ['0.0.0.0/0']
+        project: "{{ gcp_project_id }}"
+        auth_kind: "serviceaccount"
+        service_account_file: "{{ gcp_service_account_file }}"
+        state: present
+
+    - name: Tworzenie reguły firewalla zezwalającej na ruch FTP (command)
+      google.cloud.gcp_compute_firewall:
+        name: "{{ gcp_new_network_name }}-allow-ftp-command"
+        network:
+          name: "{{ gcp_new_network_name }}"
+        allowed:
+          - ip_protocol: tcp
+            ports: ['20', '21']
+        source_ranges: ['0.0.0.0/0']
+        project: "{{ gcp_project_id }}"
+        auth_kind: "serviceaccount"
+        service_account_file: "{{ gcp_service_account_file }}"
+        state: present
+
+    - name: Tworzenie reguły firewalla zezwalającej na ruch FTP (passive mode)
+      google.cloud.gcp_compute_firewall:
+        name: "{{ gcp_new_network_name }}-allow-ftp-passive"
+        network:
+          name: "{{ gcp_new_network_name }}"
+        allowed:
+          - ip_protocol: tcp
+            ports: ['21000-21010'] # Węższy zakres dla pasywnego FTP
+        source_ranges: ['0.0.0.0/0']
         project: "{{ gcp_project_id }}"
         auth_kind: "serviceaccount"
         service_account_file: "{{ gcp_service_account_file }}"

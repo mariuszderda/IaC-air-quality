@@ -1,22 +1,22 @@
 ---
 - name: Instalacja i konfiguracja klastra Apache Cassandra
-  hosts: gcp_vms
+  hosts: database
   become: yes
   gather_facts: true # Musi być true, aby uzyskać ansible_facts
 
   tasks:
-    - name: Pobierz wewnętrzne adresy IP wszystkich węzłów z grupy gcp_vms
+    - name: Pobierz wewnętrzne adresy IP wszystkich węzłów z grupy database
       ansible.builtin.set_fact:
         # Filtrujemy, aby wybrać tylko adresy IP z zakresu 10.x.x.x
-        all_internal_ips: "{{ groups['gcp_vms'] | map('extract', hostvars, ['ansible_facts', 'all_ipv4_addresses']) | flatten | select('match', '^10\\.') | unique | list }}"
+        all_internal_ips: "{{ groups['database'] | map('extract', hostvars, ['ansible_facts', 'all_ipv4_addresses']) | flatten | select('match', '^10\\.') | unique | list }}"
       run_once: true
 
     - name: Wybierz pierwszy i ewentualnie ostatni wewnętrzny IP jako seedy
       ansible.builtin.set_fact:
-        # Pierwszy seed to pierwszy host z grupy gcp_vms
-        first_seed_internal_ip: "{{ (hostvars[groups['gcp_vms'][0]]['ansible_facts']['all_ipv4_addresses'] | select('match', '^10\\.') | first) | default('') }}"
-        # Drugi seed (jeśli więcej niż 3 hosty) to ostatni host z grupy gcp_vms
-        last_seed_internal_ip: "{{ (hostvars[groups['gcp_vms'][-1]]['ansible_facts']['all_ipv4_addresses'] | select('match', '^10\\.') | first if groups['gcp_vms'] | length > 3 else '') | default('') }}"
+        # Pierwszy seed to pierwszy host z grupy database
+        first_seed_internal_ip: "{{ (hostvars[groups['database'][0]]['ansible_facts']['all_ipv4_addresses'] | select('match', '^10\\.') | first) | default('') }}"
+        # Drugi seed (jeśli więcej niż 3 hosty) to ostatni host z grupy database
+        last_seed_internal_ip: "{{ (hostvars[groups['database'][-1]]['ansible_facts']['all_ipv4_addresses'] | select('match', '^10\\.') | first if groups['database'] | length > 3 else '') | default('') }}"
       run_once: true
 
     - name: Zbuduj listę seedów Cassandry
@@ -43,5 +43,5 @@
         name: cassandra_node
       vars:
         # Jawnie przekaż listę seedów i flagę początkowej konfiguracji do roli
-        cassandra_seeds: "{{ hostvars[groups['gcp_vms'][0]]['cassandra_seeds'] }}"
+        cassandra_seeds: "{{ hostvars[groups['database'][0]]['cassandra_seeds'] }}"
         is_initial_cluster_setup: true

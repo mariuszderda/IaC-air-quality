@@ -1,6 +1,6 @@
 ---
 - name: Sprawdzenie statusu klastra Cassandra
-  hosts: gcp_vms[0] # Celuje w pierwszy węzeł klastra
+  hosts: database[0] # Celuje w pierwszy węzeł klastra
   become: yes
   gather_facts: no
 
