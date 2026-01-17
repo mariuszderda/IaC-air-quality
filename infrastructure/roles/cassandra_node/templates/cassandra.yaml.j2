@@ -37,7 +37,7 @@ row_cache_save_period: 0s
 counter_cache_size:
 counter_cache_save_period: 7200s
 saved_caches_directory: /var/lib/cassandra/saved_caches
-commitlog_sync: "{{ cassandra_commitlog_sync | default('batch') }}"
+commitlog_sync: "{{ cassandra_commitlog_sync | default('period') }}"
 commitlog_sync_period: 10000ms
 commitlog_segment_size: "{{ cassandra_commitlog_segment_size | default('64MiB') }}"
 seed_provider:

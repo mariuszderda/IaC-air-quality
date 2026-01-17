@@ -3,7 +3,8 @@
 gcp_project_id: "cassandra-cluster-483113"
 gcp_service_account_file: "../klucz-serwisowy.json" # Umieść ten plik w głównym katalogu projektu
 gcp_zone: "{{ gcp_region }}-a" # Strefa w ramach wybranego regionu (np. europe-central2-a)
-gcp_region: "europe-west10" # Główny region GCP (np. europe-central2 dla Warszawy)
+#gcp_region: "europe-west10" # Główny region GCP (np. europe-central2 dla Warszawy)
+gcp_region: "europe-central2"
 
 gcp_instance_name: "rocky-cassandra"
 gcp_machine_type: "e2-standard-2"
