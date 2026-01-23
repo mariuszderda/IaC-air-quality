@@ -35,6 +35,19 @@
     state: latest
   tags: [ system, cassandra ]
 
+- name: Instalacja i konfiguracja chrony do synchronizacji czasu
+  ansible.builtin.dnf:
+    name: chrony
+    state: present
+  tags: [ system, cassandra ]
+
+- name: Uruchomienie i włączenie usługi chronyd
+  ansible.builtin.service:
+    name: chronyd
+    state: started
+    enabled: yes
+  tags: [ system, cassandra ]
+
 - name: Instalacja OpenJDK 11
   ansible.builtin.dnf:
     name: java-11-openjdk-devel

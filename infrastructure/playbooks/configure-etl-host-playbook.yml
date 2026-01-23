@@ -1,0 +1,198 @@
+---
+- name: Configure ETL Host (Python Environment + FTP Server)
+  hosts: ftp
+  become: yes
+  gather_facts: yes
+  vars_prompt:
+    - name: "ftp_user"
+      prompt: "Enter the username for the FTP read-only user"
+      private: no
+    - name: "ftp_password"
+      prompt: "Enter the password for the FTP read-only user"
+      private: yes
+
+  tasks:
+    # --- System and Build Dependencies ---
+    - name: Install system and pyenv build dependencies
+      ansible.builtin.dnf:
+        name:
+          - java-21-openjdk-devel
+          - python3-devel
+          - gcc-c++
+          - git
+          - make
+          - zlib-devel
+          - bzip2
+          - bzip2-devel
+          - readline-devel
+          - sqlite
+          - sqlite-devel
+          - openssl-devel
+          - tk-devel
+          - tcl-devel
+          - libffi-devel
+          - xz-devel
+          - pandoc
+          - texlive-xetex
+          - texlive-latex-base
+          - texlive-fonts-recommended
+        state: present
+
+    
+
+
+    - name: Install pyenv and Python for the 'databasecassandra' user
+      become: yes
+      become_user: databasecassandra
+      block:
+        - name: Check if pyenv is already installed
+          ansible.builtin.stat:
+            path: "/home/databasecassandra/.pyenv"
+          register: pyenv_stat
+
+        - name: Clone pyenv repository
+          ansible.builtin.git:
+            repo: 'https://github.com/pyenv/pyenv.git'
+            dest: "/home/databasecassandra/.pyenv"
+            depth: 1
+          when: not pyenv_stat.stat.exists
+
+        - name: Add pyenv to .bash_profile
+          ansible.builtin.blockinfile:
+            path: "/home/databasecassandra/.bash_profile"
+            create: yes
+            block: |
+              export PYENV_ROOT="$HOME/.pyenv"
+              export PATH="$PYENV_ROOT/bin:$PATH"
+              if command -v pyenv 1>/dev/null 2>&1; then
+                eval "$(pyenv init --path)"
+              fi
+
+        - name: Check if Python 3.8.18 is installed
+          ansible.builtin.shell:
+            cmd: "source /home/databasecassandra/.bash_profile && pyenv versions --bare | grep -q '^3.8.18$'"
+            executable: /bin/bash
+          register: python_38_installed
+          changed_when: false
+          ignore_errors: yes
+
+        - name: Install Python 3.8.18
+          ansible.builtin.shell:
+            cmd: "source /home/{{ etl_user }}/.bash_profile && pyenv install 3.8.18"
+            executable: /bin/bash
+          when: python_38_installed.rc != 0
+          async: 700
+          poll: 10
+
+        - name: Set Python 3.8.18 as global default
+          ansible.builtin.shell:
+            cmd: "source /home/{{ etl_user }}/.bash_profile && pyenv global 3.8.18"
+            executable: /bin/bash
+          changed_when: true
+
+        - name: Install Python libraries for ETL using pyenv's pip
+          ansible.builtin.shell:
+            cmd: |
+              source /home/{{ etl_user }}/.bash_profile
+              pip install \
+                pyspark==3.5.0 \
+                cassandra-driver==3.29.3 \
+                pandas==2.0.3 \
+                openaq==0.3.0 \
+                python-dotenv==1.0.1 \
+                matplotlib==3.7.5 \
+                jupyter \
+                notebook \
+                nbconvert
+            executable: /bin/bash
+          changed_when: true
+
+    # --- FTP Server and Upload-Only User Setup ---
+    - name: Install vsftpd
+      ansible.builtin.dnf:
+        name: vsftpd
+        state: present
+
+    - name: Create FTP upload-only user with a nologin shell
+      ansible.builtin.user:
+        name: "{{ ftp_user }}"
+        password: "{{ ftp_password | password_hash('sha512') }}"
+        home: "/home/{{ ftp_user }}"
+        shell: /sbin/nologin
+        state: present
+
+    - name: Create FTP root directory (chroot parent)
+      ansible.builtin.file:
+        path: "/home/{{ ftp_user }}/ftp"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create writable subdirectory for FTP user
+      ansible.builtin.file:
+        path: "/home/{{ ftp_user }}/ftp/files"
+        state: directory
+        owner: "{{ ftp_user }}"
+        group: "{{ ftp_user }}"
+        mode: '0755'
+
+    - name: Configure vsftpd
+      ansible.builtin.blockinfile:
+        path: /etc/vsftpd/vsftpd.conf
+        block: |
+          anonymous_enable=NO
+          local_enable=YES
+          write_enable=YES
+          chroot_local_user=YES
+          pasv_enable=YES
+          pasv_min_port=21000
+          pasv_max_port=21010
+          pasv_addr_resolve=YES
+          pasv_address={{ ansible_default_ipv4.address }}
+          userlist_enable=YES
+          userlist_file=/etc/vsftpd/user_list
+          userlist_deny=NO
+        create: no
+        backup: yes
+      notify: restart vsftpd
+
+    - name: Ensure /sbin/nologin is in /etc/shells for vsftpd
+      ansible.builtin.lineinfile:
+        path: /etc/shells
+        line: /sbin/nologin
+        state: present
+        create: yes
+
+    - name: Add FTP user to the allowed user list
+      ansible.builtin.lineinfile:
+        path: /etc/vsftpd/user_list
+        line: "{{ ftp_user }}"
+        create: yes
+        state: present
+
+    - name: Configure firewalld for FTP
+      ansible.posix.firewalld:
+        service: ftp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Configure firewalld for passive FTP ports
+      ansible.posix.firewalld:
+        port: 21000-21010/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Enable and start vsftpd service
+      ansible.builtin.service:
+        name: vsftpd
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: restart vsftpd
+      ansible.builtin.service:
+        name: vsftpd
+        state: restarted

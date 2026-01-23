@@ -1,0 +1,63 @@
+---
+- name: Deploy and Schedule ETL Processes
+  hosts: ftp
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: Create necessary directories for ETL user
+      become_user: databasecassandra
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /home/databasecassandra/etl
+        - /home/databasecassandra/etl_reports
+        - /home/databasecassandra/logs
+
+    - name: Copy ETL scripts to the remote host
+      ansible.posix.synchronize:
+        src: ../../etl/
+        dest: /home/databasecassandra/etl/
+        rsync_opts:
+          - "--chown=databasecassandra:databasecassandra"
+
+    - name: Schedule hourly data fetching job
+      ansible.builtin.cron:
+        name: "ETL - Fetch Air Quality Data"
+        minute: "0"
+        hour: "*"
+        user: databasecassandra
+        job: "bash -c 'source /home/databasecassandra/.bash_profile && python /home/databasecassandra/etl/get_data.py >> /home/databasecassandra/logs/get_data.log 2>&1'"
+        cron_file: etl_air_quality
+
+    - name: Schedule daily data aggregation job
+      ansible.builtin.cron:
+        name: "ETL - Aggregate Daily Averages"
+        minute: "0"
+        hour: "4"
+        user: databasecassandra
+        job: >
+          bash -c '
+          source /home/databasecassandra/.bash_profile &&
+          export SCRIPT_PATH="/home/databasecassandra/etl/agregation.py" &&
+          export LOG_FILE="/home/databasecassandra/logs/agregation.log" &&
+          spark-submit \
+            --packages com.datastax.spark:spark-cassandra-connector_2.12:3.5.0 \
+            --conf spark.cassandra.connection.host=$CASSANDRA_NODE_IP \
+            --conf spark.cassandra.auth.username=$DATABASE_USER \
+            --conf spark.cassandra.auth.password=$DATABASE_PASSWORD \
+            $SCRIPT_PATH >> $LOG_FILE 2>&1
+          '
+        cron_file: etl_air_quality
+
+    - name: Schedule daily report generation job
+      ansible.builtin.cron:
+        name: "ETL - Generate Daily PDF Report"
+        minute: "0"
+        hour: "6"
+        user: databasecassandra
+        job: "bash -c 'source /home/databasecassandra/.bash_profile && jupyter nbconvert --execute /home/databasecassandra/etl/data_visualization.ipynb --to pdf --output air_quality_report_$(date +%Y-%m-%d).pdf --output-dir /home/databasecassandra/etl_reports >> /home/databasecassandra/logs/report_generation.log 2>&1'"
+        cron_file: etl_air_quality
+

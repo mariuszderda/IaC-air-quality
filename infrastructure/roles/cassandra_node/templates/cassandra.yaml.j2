@@ -15,7 +15,8 @@ hints_flush_period: 10000ms
 max_hints_file_size: 128MiB
 auto_hints_cleanup_enabled: false
 batchlog_replay_throttle: 1024KiB
-authenticator: AllowAllAuthenticator
+authenticator: {{ "PasswordAuthenticator" if cassandra_auth_enabled | default(false) else "AllowAllAuthenticator" }}
+authorizer: {{ "CassandraAuthorizer" if cassandra_auth_enabled | default(false) else "AllowAllAuthorizer" }}
 authorizer: AllowAllAuthorizer
 role_manager: CassandraRoleManager
 network_authorizer: AllowAllNetworkAuthorizer

@@ -21,12 +21,15 @@ Projekt składa się z dedykowanych playbooków:
 ├── playbooks/
 │   ├── network-playbook.yml
 │   ├── vm-playbook.yml
-│   └── configure-cassandra-playbook.yml  # Nowy playbook do konfiguracji
+│   ├── configure-cassandra-playbook.yml
+│   ├── configure-ftp-playbook.yml
+│   ├── create-schema-playbook.yml      # Nowy playbook do tworzenia schematu bazy danych
+│   ├── secure-cassandra-playbook.yml   # Nowy playbook do zabezpieczania klastra Cassandry
 ├── inventory
 ├── README.md
 ├── roles/
 │   ├── cassandra_node/
-│   └── gcp_vm/
+│   └── gcp_vm/                         # Zbędna rola gcp_vms została usunięta
 ├── vars/
 │   └── main.yml
 │
@@ -69,12 +72,13 @@ Teraz, gdy maszyny istnieją, a inwentarz jest gotowy, uruchom nowy playbook kon
 ansible-playbook -i gcp_inventory.ini playbooks/configure-cassandra-playbook.yml
 ```
 
-### Etap 3b: Skonfiguruj serwer FTP (opcjonalnie)
+### Etap 3b: Skonfiguruj host ETL (wcześniej serwer FTP)
 
-Jeśli utworzyłeś maszynę w grupie `ftp`, uruchom playbook konfiguracyjny, podając dane dla nowego użytkownika, który będzie używany do połączeń FTP.
+Jeśli utworzyłeś maszynę w grupie `ftp` (teraz `etl-host`), uruchom playbook konfiguracyjny, podając dane dla użytkownika FTP. Ten użytkownik będzie miał teraz **uprawnienia tylko do odczytu**.
 
 ```bash
-ansible-playbook -i gcp_inventory.ini playbooks/configure-ftp-playbook.yml --extra-vars "ftp_user=nazwa_uzytkownika ftp_password=haslo_dla_ftp"
+# Zastąp etl-host-ip-1 adresem IP utworzonej maszyny z grupą ftp
+ansible-playbook -i gcp_inventory.ini playbooks/configure-etl-host-playbook.yml --limit etl-host-ip-1
 ```
 
 **Jak to działa?**
@@ -106,3 +110,34 @@ ansible-playbook -i gcp_inventory.ini playbooks/add-node-playbook.yml --limit <P
 
 **Jak to działa?**
 Playbook `add-node-playbook.yml` wciąż pobiera adres IP "seeda" od pierwszej maszyny w inwentarzu, ale dzięki fladze `--limit` wszystkie zadania konfiguracyjne z roli `cassandra_node` zostaną wykonane **tylko na nowym węźle**. Co najważniejsze, zadania czyszczące dane są pomijane, więc jest to operacja bezpieczna dla istniejącego klastra.
+
+---
+### Etap 5: Inicjalizacja schematu bazy danych i zabezpieczenie
+
+Po skonfigurowaniu klastra Cassandra, należy utworzyć schemat bazy danych (keyspace i tabele) oraz zabezpieczyć klaster, zmieniając domyślne dane logowania.
+
+**Krok 1: Inicjalizacja schematu bazy danych**
+
+Uruchom ten playbook, aby stworzyć `keyspace` i tabele wymagane przez aplikację. Playbook ten połączy się z jednym z węzłów Cassandry i wykona skrypt `create_tables.cql`.
+
+```bash
+ansible-playbook -i gcp_inventory.ini playbooks/create-schema-playbook.yml
+```
+
+**Krok 2: Zabezpieczenie klastra Cassandra (dodanie użytkownika i wyłączenie domyślnego)**
+
+Ten playbook włączy uwierzytelnianie w Cassandrze, utworzy nowego superużytkownika na podstawie podanych danych oraz zablokuje domyślne konto `cassandra`.
+
+**Ważne:** Przed uruchomieniem tego playbooka upewnij się, że w pliku `.env` w głównym katalogu projektu zdefiniowałeś zmienne `DATABASE_USER` i `DATABASE_PASSWORD` z pożądanymi danymi logowania dla nowego użytkownika bazy danych. Playbook automatycznie je wczyta.
+
+```bash
+# W przykładzie użyto zmiennych z pliku .env. Możesz je też podać jako extra-vars:
+# ansible-playbook -i gcp_inventory.ini playbooks/secure-cassandra-playbook.yml --extra-vars "db_user=moj_user db_pass=moje_haslo"
+ansible-playbook -i gcp_inventory.ini playbooks/secure-cassandra-playbook.yml
+```
+**Jak to działa?**
+Playbook najpierw restartuje wszystkie węzły Cassandry z włączonym uwierzytelnianiem. Następnie, korzystając z domyślnego konta `cassandra` (dostępnego tylko raz, tuż po włączeniu uwierzytelniania), tworzy nowego superużytkownika. Na koniec, logując się jako nowo utworzony użytkownik, blokuje domyślne konto `cassandra` dla zwiększenia bezpieczeństwa.
+
+### Uwaga dotycząca logowania SSH dla użytkownika 'databasecassandra'
+
+Maszyny wirtualne GCP domyślnie używają kluczy SSH do uwierzytelniania. Logowanie hasłem jest wyłączone ze względów bezpieczeństwa. Upewnij się, że Twój klucz publiczny SSH jest dodany do metadanych projektu GCP lub do konkretnej instancji, aby umożliwić logowanie jako użytkownik 'databasecassandra'. Jest to użytkownik, który będzie zarządzał środowiskiem ETL i uruchamiał skrypty.
