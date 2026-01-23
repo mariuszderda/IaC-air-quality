@@ -14,7 +14,7 @@ load_dotenv()
 OPENAQ_API_KEY = os.getenv("OPENAQ_API_KEY")
 DATABASE_USER = os.getenv("DATABASE_USER")
 DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD")
-NODE_IP = '34.116.155.182' # Twój adres IP Cassandry
+NODE_IP = os.getenv("CASSANDRA_NODE_IP")
 
 CHECKPOINT_FILE = 'checkpoint.json'
 SENSORS_FILE = '../data/location_list.csv'
