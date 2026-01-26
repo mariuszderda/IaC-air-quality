@@ -85,7 +85,7 @@
           FTP_DIR="/home/{{ ftp_user }}/ftp/files" &&
           REPORT_NAME="air_quality_report_$(date +\%Y-\%m-\%d).pdf" &&
           jupyter nbconvert --execute /home/databasecassandra/etl/data_visualization.ipynb --to html --no-input --output-dir="$REPORT_DIR" --output="$REPORT_NAME" >> /home/databasecassandra/logs/report_generation.log 2>&1 &&
-          cp "$REPORT_DIR/$REPORT_NAME" "$FTP_DIR/"
+          sudo cp "$REPORT_DIR/$REPORT_NAME" "$FTP_DIR/"
           '
         cron_file: etl_air_quality
 

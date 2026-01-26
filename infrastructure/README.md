@@ -1,143 +1,136 @@
-# Projekt Ansible do dynamicznego tworzenia klastra Apache Cassandra w Google Cloud
+# Infrastruktura jako kod (IaC) z użyciem Ansible
 
-## 1. Cel projektu
+## 1. Cel i zakres
 
-Ten projekt wykorzystuje Ansible do w pełni zautomatyzowanego procesu tworzenia infrastruktury dla klastra Apache Cassandra w GCP. Został zaprojektowany w sposób modularny, aby umożliwić niezależne zarządzanie siecią, maszynami wirtualnymi oraz procesem konfiguracji klastra.
+Ten moduł zawiera kod Ansible odpowiedzialny za automatyczne tworzenie i konfigurację całej infrastruktury potrzebnej do działania platformy do analizy jakości powietrza w chmurze Google Cloud Platform (GCP).
 
-## 2. Architektura i przepływ pracy
+Główne zadania realizowane przez Ansible:
+-   **Tworzenie sieci**: Automatyczne tworzenie dedykowanej sieci VPC wraz z niezbędnymi regułami firewalla.
+-   **Provisioning maszyn wirtualnych**: Dynamiczne tworzenie instancji VM dla klastra Cassandra oraz dla hosta ETL/FTP.
+-   **Konfiguracja klastra Cassandra**: Instalacja, konfiguracja i uruchomienie wielowęzłowego, odpornego na awarie klastra Apache Cassandra.
+-   **Konfiguracja hosta ETL**: Przygotowanie dedykowanej maszyny do uruchamiania procesów ETL, w tym instalacja Pythona, Sparka, i narzędzi pomocniczych.
+-   **Automatyzacja zadań**: Planowanie i automatyzacja cyklicznych zadań ETL za pomocą crona (lub jako przygotowanie pod deployment Airflow).
 
-Projekt składa się z dedykowanych playbooków:
+## 2. Struktura i role Ansible
 
-*   **Katalog `playbooks/`**: Zawiera wszystkie playbooki Ansible.
-    *   `network-playbook.yml`: **(Krok 1)** Tworzy sieć VPC i reguły zapory. Uruchamiany tylko raz.
-    *   `vm-playbook.yml`: **(Krok 2)** Tworzy pojedynczą maszynę wirtualną z jej własnym statycznym IP. Uruchamiany wielokrotnie dla każdego węzła.
-    *   `configure-cassandra-playbook.yml`: **(Krok 3)** Konfiguruje oprogramowanie Cassandra na **wszystkich** maszynach zdefiniowanych w inwentarzu, automatycznie tworząc z nich klaster.
-
----
-## 3. Struktura projektu
+Projekt jest zorganizowany w sposób modularny, z wykorzystaniem ról Ansible, aby zapewnić reużywalność i czytelność kodu.
 
 ```
-.
-├── playbooks/
-│   ├── network-playbook.yml
-│   ├── vm-playbook.yml
-│   ├── configure-cassandra-playbook.yml
-│   ├── configure-ftp-playbook.yml
-│   ├── create-schema-playbook.yml
-│   ├── secure-cassandra-playbook.yml
+infrastructure/
+├── ansible.cfg
+├── configure-cluster.sh
+├── gcp_inventory.ini       # tworzony automatycznie
 ├── inventory
+├── klucz-serwisowy.json    # UWAGA! klucz należy wygenerować
+├── playbooks
+│   ├── add-node-playbook.yml
+│   ├── check-cassandra-cluster-playbook.yml
+│   ├── configure-cassandra-playbook.yml
+│   ├── configure-cron-playbook.yml
+│   ├── configure-etl-host-playbook.yml
+│   ├── create-schema-playbook.yml
+│   ├── network-playbook.yml
+│   ├── optimization-cassandra-playbook.yml
+│   ├── secure-cassandra-playbook.yml
+│   └── vm-playbook.yml
 ├── README.md
-├── roles/
-│   ├── cassandra_node/
-│   └── gcp_vm/
-├── vars/
-│   └── main.yml
-│
-├── klucz-serwisowy.json     # (Musisz dodać)
-└── gcp_inventory.ini        # (Generowany)
+├── roles
+│   ├── cassandra_node
+│   │   ├── defaults
+│   │   ├── handlers
+│   │   ├── tasks
+│   │   └── templates
+│   └── gcp_vm
+│       ├── defaults
+│       └── tasks
+└── vars
+    └── main.yml
 ```
----
-## 4. Uruchamianie
 
-### Etap 1: Przygotuj sieć (jednorazowo)
+-   `playbooks/`: Katalog zawierający główne playbooki, które orkiestrują całym procesem.
+-   `roles/`:
+    -   `gcp_vm`: Rola odpowiedzialna za tworzenie i zarządzanie maszynami wirtualnymi w GCP.
+    -   `cassandra_node`: Rola dedykowana do instalacji i konfiguracji pojedynczego węzła Cassandra.
+-   `vars/main.yml`: Plik z głównymi zmiennymi, takimi jak region GCP, typ maszyn czy nazwy zasobów.
+-   `gcp_inventory.ini`: Dynamicznie generowany plik inwentarza, zawierający adresy IP nowo utworzonych maszyn.
 
+## 3. Przepływ pracy i uruchamianie
+
+Proces tworzenia infrastruktury został podzielony na logiczne etapy, realizowane przez dedykowane playbooki.
+
+### Etap 1: Przygotowanie sieci (jednorazowo)
+
+Ten playbook tworzy sieć VPC i reguły firewalla. Należy go uruchomić tylko raz dla danego środowiska.
 ```bash
 ansible-playbook playbooks/network-playbook.yml
 ```
 
-### Etap 2: Stwórz maszyny (wielokrotnie)
+### Etap 2: Tworzenie maszyn wirtualnych (wielokrotnie)
 
-Uruchom ten playbook dla każdego węzła, który chcesz stworzyć. Domyślnie maszyny są dodawane do grupy `database`. Możesz użyć zmiennych `ftp` lub `http`, aby dodać je do odpowiednich grup.
+Playbook `vm-playbook.yml` służy do tworzenia pojedynczej maszyny wirtualnej. Uruchamia się go wielokrotnie – raz dla każdego węzła klastra Cassandra i raz dla hosta ETL.
 
-```bash
-# Stwórz pierwszy węzeł (domyślnie w grupie database)
-ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=cassandra-node-1 gcp_external_ip_name=cassandra-ip-1"
+-   **Tworzenie węzłów Cassandra**: Domyślnie, maszyny są dodawane do grupy `database`.
+    ```bash
+    # Stwórz pierwszy węzeł
+    ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=cassandra-node-1 gcp_external_ip_name=cassandra-ip-1"
 
-# Stwórz drugi węzeł (domyślnie w grupie database)
-ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=cassandra-node-2 gcp_external_ip_name=cassandra-ip-2"
+    # Stwórz drugi węzeł
+    ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=cassandra-node-2 gcp_external_ip_name=cassandra-ip-2"
+    ```
 
-# Stwórz maszynę w grupie ftp
-ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=ftp-node-1 gcp_external_ip_name=ftp-ip-1 ftp=true"
+-   **Tworzenie hosta ETL/Airflow**: Użyj zmiennej `ftp=true` (nazwa historyczna, można ją zmienić na `etl=true`), aby dodać maszynę do grupy `ftp`.
+    ```bash
+    ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=etl-host-1 gcp_external_ip_name=etl-ip-1 ftp=true"
+    ```
 
-# Stwórz maszynę w grupie http
-ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=http-node-1 gcp_external_ip_name=http-ip-1 http=true"
-```
-Po wykonaniu tych komend, plik `gcp_inventory.ini` będzie zawierał publiczne IP wszystkich maszyn w odpowiednich grupach.
+### Etap 3: Konfiguracja usług
 
-### Etap 3: Skonfiguruj klaster Cassandra
+Po utworzeniu maszyn i wygenerowaniu inwentarza `gcp_inventory.ini`, można przystąpić do konfiguracji usług.
 
-Teraz, gdy maszyny istnieją, a inwentarz jest gotowy, uruchom nowy playbook konfiguracyjny. On sam zajmie się resztą.
+-   **Konfiguracja klastra Cassandra**:
+    ```bash
+    ansible-playbook -i gcp_inventory.ini playbooks/configure-cassandra-playbook.yml
+    ```
+    Playbook automatycznie wykrywa wewnętrzne adresy IP maszyn i używa pierwszego z nich jako "seed" dla reszty klastra.
 
-```bash
-ansible-playbook -i gcp_inventory.ini playbooks/configure-cassandra-playbook.yml
-```
+-   **Konfiguracja hosta ETL**:
+    ```bash
+    ansible-playbook -i gcp_inventory.ini playbooks/configure-etl-host-playbook.yml
+    ```
 
-### Etap 3b: Skonfiguruj host ETL (wcześniej serwer FTP)
+### Etap 4: Operacje na działającym klastrze
 
-Jeśli utworzyłeś maszynę w grupie `ftp` (teraz `etl-host`), uruchom playbook konfiguracyjny, podając dane dla użytkownika FTP. Ten użytkownik będzie miał teraz **uprawnienia tylko do odczytu**.
+-   **Dodawanie nowego węzła do klastra**:
+    1.  Stwórz nową maszynę (Etap 2).
+    2.  Uruchom dedykowany playbook, ograniczając jego wykonanie tylko do nowego węzła za pomocą flagi `--limit`.
+       ```bash
+       ansible-playbook -i gcp_inventory.ini playbooks/add-node-playbook.yml --limit=<NAZWA_NOWEGO_WĘZŁA>
+       ```
 
-```bash
-# Zastąp etl-host-ip-1 adresem IP utworzonej maszyny z grupą ftp
-ansible-playbook -i gcp_inventory.ini playbooks/configure-etl-host-playbook.yml --limit etl-host-ip-1
-```
+-   **Inicjalizacja schematu bazy danych**:
+    Po pierwszym skonfigurowaniu klastra, utwórz `keyspace` i tabele.
+    ```bash
+    ansible-playbook -i gcp_inventory.ini playbooks/create-schema-playbook.yml
+    ```
 
-**Jak to działa?**
-Playbook najpierw połączy się z każdą maszyną, aby pobrać jej **wewnętrzny adres IP**. Następnie, użyje wewnętrznego adresu IP **pierwszej maszyny z listy** jako "seed" i przekaże go do konfiguracji wszystkich pozostałych maszyn, zapewniając, że poprawnie dołączą do klastra.
+-   **Zabezpieczenie klastra**:
+    Włącz uwierzytelnianie, stwórz nowego superużytkownika (dane z `.env`) i zablokuj domyślne konto `cassandra`.
+    ```bash
+    ansible-playbook -i gcp_inventory.ini playbooks/secure-cassandra-playbook.yml
+    ```
 
-### Etap 4: Dodawanie nowego węzła do klastra
+-   **Wdrożenie i zaplanowanie zadań ETL**:
+    Skopiuj skrypty ETL na hosta i skonfiguruj zadania cron.
+    ```bash
+    ansible-playbook -i gcp_inventory.ini playbooks/configure-cron-playbook.yml
+    ```
 
-Gdy Twój klaster już działa i chcesz dodać do niego kolejną maszynę, wykonaj poniższe kroki.
+## 4. Wymagania
 
-**Krok 1: Stwórz nową maszynę wirtualną**
+-   Zainstalowany Ansible.
+-   Konto w Google Cloud Platform z uprawnieniami do tworzenia zasobów.
+-   Wygenerowany klucz konta serwisowego GCP (`klucz-serwisowy.json`).
+-   Skonfigurowany dostęp SSH do maszyn (klucz prywatny).
 
-Użyj znanego już playbooka `vm-playbook.yml`, podając unikalne nazwy dla nowej maszyny i jej IP. To automatycznie doda adres IP nowego węzła do pliku `gcp_inventory.ini`.
+Dzięki takiemu podejściu, cała platforma – od maszyn wirtualnych, przez bazę danych, aż po orkiestrator zadań – jest w pełni definiowalna i odtwarzalna za pomocą kodu.
 
-```bash
-# Stwórz czwarty węzeł
-ansible-playbook playbooks/vm-playbook.yml --extra-vars "gcp_instance_name=cassandra-node-4 gcp_external_ip_name=cassandra-ip-4"
-```
-
-**Krok 2: Skonfiguruj tylko nowy węzeł**
-
-Teraz użyj nowego playbooka `add-node-playbook.yml`. Jest on specjalnie przygotowany, aby nie naruszać już działających węzłów. Kluczowe jest użycie flagi `--limit`, aby wskazać, że operacje mają dotyczyć **tylko nowej maszyny**.
-
-Musisz podać publiczny adres IP nowej maszyny, który został dodany do `gcp_inventory.ini`.
-
-```bash
-# Zastąp <PUBLIC_IP_NOWEGO_WEZLA> adresem IP maszyny cassandra-node-4
-ansible-playbook -i gcp_inventory.ini playbooks/add-node-playbook.yml --limit=<NAZWA_NOWEGO_WĘZŁA>
-```
-
-**Jak to działa?**
-Playbook `add-node-playbook.yml` wciąż pobiera adres IP "seeda" od pierwszej maszyny w inwentarzu, ale dzięki fladze `--limit` wszystkie zadania konfiguracyjne z roli `cassandra_node` zostaną wykonane **tylko na nowym węźle**. Co najważniejsze, zadania czyszczące dane są pomijane, więc jest to operacja bezpieczna dla istniejącego klastra.
-
----
-### Etap 5: Inicjalizacja schematu bazy danych i zabezpieczenie
-
-Po skonfigurowaniu klastra Cassandra, należy utworzyć schemat bazy danych (keyspace i tabele) oraz zabezpieczyć klaster, zmieniając domyślne dane logowania.
-
-**Krok 1: Inicjalizacja schematu bazy danych**
-
-Uruchom ten playbook, aby stworzyć `keyspace` i tabele wymagane przez aplikację. Playbook ten połączy się z jednym z węzłów Cassandry i wykona skrypt `create_tables.cql`.
-
-```bash
-ansible-playbook -i gcp_inventory.ini playbooks/create-schema-playbook.yml
-```
-
-**Krok 2: Zabezpieczenie klastra Cassandra (dodanie użytkownika i wyłączenie domyślnego)**
-
-Ten playbook włączy uwierzytelnianie w Cassandrze, utworzy nowego superużytkownika na podstawie podanych danych oraz zablokuje domyślne konto `cassandra`.
-
-**Ważne:** Przed uruchomieniem tego playbooka upewnij się, że w pliku `.env` w głównym katalogu projektu zdefiniowałeś zmienne `DATABASE_USER` i `DATABASE_PASSWORD` z pożądanymi danymi logowania dla nowego użytkownika bazy danych. Playbook automatycznie je wczyta.
-
-```bash
-# W przykładzie użyto zmiennych z pliku .env. Możesz je też podać jako extra-vars:
-# ansible-playbook -i gcp_inventory.ini playbooks/secure-cassandra-playbook.yml --extra-vars "db_user=moj_user db_pass=moje_haslo"
-ansible-playbook -i gcp_inventory.ini playbooks/secure-cassandra-playbook.yml
-```
-**Jak to działa?**
-Playbook najpierw restartuje wszystkie węzły Cassandry z włączonym uwierzytelnianiem. Następnie, korzystając z domyślnego konta `cassandra` (dostępnego tylko raz, tuż po włączeniu uwierzytelniania), tworzy nowego superużytkownika. Na koniec, logując się jako nowo utworzony użytkownik, blokuje domyślne konto `cassandra` dla zwiększenia bezpieczeństwa.
-
-### Uwaga dotycząca logowania SSH dla użytkownika 'databasecassandra'
-
-Maszyny wirtualne GCP domyślnie używają kluczy SSH do uwierzytelniania. Logowanie hasłem jest wyłączone ze względów bezpieczeństwa. Upewnij się, że Twój klucz publiczny SSH jest dodany do metadanych projektu GCP lub do konkretnej instancji, aby umożliwić logowanie jako użytkownik 'databasecassandra'. Jest to użytkownik, który będzie zarządzał środowiskiem ETL i uruchamiał skrypty.
