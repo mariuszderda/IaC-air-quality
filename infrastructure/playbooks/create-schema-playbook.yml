@@ -4,6 +4,25 @@
   become: yes
   gather_facts: true
   tasks:
+    - name: Czytaj plik .env przez shell
+      shell: "cat ../../.env"
+      register: env_file
+      delegate_to: localhost
+      no_log: true
+
+    - name: Ustaw zmienne dynamicznie
+      set_fact:
+        "{{ item.split('=')[0] }}": "{{ item.split('=')[1] }}"
+      loop: "{{ env_file.stdout_lines }}"
+      when: "'=' in item"
+      no_log: true
+
+    - name: Set database user and password with defaults
+      ansible.builtin.set_fact:
+        db_user: "{{ DATABASE_USER | default('cassandra', true) }}"
+        db_pass: "{{ DATABASE_PASSWORD | default('cassandra', true) }}"
+      no_log: true
+
     - name: Instalacja cqlsh przez pip
       ansible.builtin.pip:
         name: cqlsh
@@ -17,7 +36,6 @@
         state: present
         mode: '0644'
 
-
     - name: Kopiowanie skryptu CQL na zdalny węzeł
       ansible.builtin.copy:
         src: ../../etl/create_tables.cql
@@ -25,10 +43,11 @@
         mode: '0644'
 
     - name: Wykonanie skryptu CQL w celu utworzenia schematu
-      ansible.builtin.shell: "source ~/.bashrc && cqlsh {{ ansible_default_ipv4.address }} 9042 -f /tmp/create_tables.cql"
+      ansible.builtin.shell: "source ~/.bashrc && cqlsh {{ ansible_default_ipv4.address }} 9042 -u {{ db_user }} -p {{ db_pass }} -f /tmp/create_tables.cql"
       args:
         executable: /bin/bash
       changed_when: true
+      no_log: true
 
     - name: Usunięcie tymczasowego skryptu CQL
       ansible.builtin.file:
