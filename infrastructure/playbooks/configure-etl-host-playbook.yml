@@ -3,17 +3,10 @@
   hosts: ftp
   become: yes
   gather_facts: yes
-  vars_prompt:
-    - name: "ftp_user"
-      prompt: "Enter the username for the FTP read-only user"
-      private: no
-    - name: "ftp_password"
-      prompt: "Enter the password for the FTP read-only user"
-      private: yes
+
 
   tasks:
     # --- System and Build Dependencies ---
-    - name: Install system and pyenv build dependencies
       ansible.builtin.dnf:
         name:
           - java-21-openjdk-devel
@@ -107,6 +100,38 @@
             executable: /bin/bash
           changed_when: true
 
+        - name: Kopiowanie skryptów ETL na host ETL
+          ansible.builtin.copy:
+            src: ../../etl/
+            dest: "/home/{{ etl_user }}/etl/"
+            owner: "{{ etl_user }}"
+            group: "{{ etl_user }}"
+            mode: '0755'
+          become: true
+          become_user: "{{ etl_user }}"
+          tags: [ etl-files ]
+
+        - name: Sprawdź, czy lokalny plik .env istnieje
+          ansible.builtin.stat:
+            path: ../../.env
+          delegate_to: localhost
+          register: env_file_stat
+
+        - name: Zatrzymaj, jeśli plik .env nie istnieje
+          ansible.builtin.fail:
+            msg: "Plik .env nie został znaleziony w głównym katalogu projektu. Uruchom najpierw playbook 'secure-cassandra-playbook.yml', aby go wygenerować."
+          when: not env_file_stat.stat.exists
+
+        - name: Skopiuj plik .env na host ETL
+          ansible.builtin.copy:
+            src: ../../.env
+            dest: "/home/databasecassandra/etl/.env"
+            owner: "databasecassandra"
+            group: "databasecassandra"
+            mode: '0600'
+          tags: [ etl-files ]
+          when: env_file_stat.stat.exists
+
     # --- FTP Server and Upload-Only User Setup ---
     - name: Install vsftpd
       ansible.builtin.dnf:
@@ -190,6 +215,8 @@
         name: vsftpd
         enabled: yes
         state: started
+
+
 
   handlers:
     - name: restart vsftpd

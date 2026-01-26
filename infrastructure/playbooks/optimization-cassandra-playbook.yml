@@ -1,6 +1,6 @@
 ---
 - name: Optymalizacja Cassandra OS, JVM i Aplikacji
-  hosts: all
+  hosts: database
   become: yes
   gather_facts: true
   serial: 1

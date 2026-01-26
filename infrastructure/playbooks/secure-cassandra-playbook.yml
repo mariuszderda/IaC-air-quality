@@ -2,17 +2,25 @@
 - name: Secure Cassandra Cluster
   hosts: database
   become: yes
-  gather_facts: no
+  gather_facts: yes
   vars:
     cassandra_auth_enabled: true
+    internal_ip_address: "{{ ansible_default_ipv4.address }}"
+  vars_files:
+    - ../roles/cassandra_node/defaults/main.yml
   tasks:
-    - name: Enable Cassandra authentication in cassandra.yaml
-      ansible.builtin.template:
-        src: ../roles/cassandra_node/templates/cassandra.yaml.j2
-        dest: /etc/cassandra/default.conf/cassandra.yaml
-        owner: cassandra
-        group: cassandra
-        mode: '0644'
+    - name: Set authenticator to PasswordAuthenticator
+      ansible.builtin.lineinfile:
+        path: /etc/cassandra/default.conf/cassandra.yaml
+        regexp: '^authenticator:'
+        line: 'authenticator: PasswordAuthenticator'
+      notify: Restart Cassandra
+
+    - name: Set authorizer to CassandraAuthorizer
+      ansible.builtin.lineinfile:
+        path: /etc/cassandra/default.conf/cassandra.yaml
+        regexp: '^authorizer:'
+        line: 'authorizer: CassandraAuthorizer'
       notify: Restart Cassandra
 
   handlers:
@@ -24,7 +32,7 @@
 - name: Create Superuser and Disable Default User
   hosts: database[0]
   become: yes
-  gather_facts: no
+  gather_facts: yes
   vars_prompt:
     - name: "db_user"
       prompt: "Enter the desired database username"
@@ -40,19 +48,52 @@
         msg: "Both db_user and db_pass must be provided. Check your .env file or pass them as extra-vars."
       when: db_user is not defined or db_user == "" or db_pass is not defined or db_pass == ""
 
+    - name: Set database credentials as facts
+      ansible.builtin.set_fact:
+        db_user_fact: "{{ db_user }}"
+        db_pass_fact: "{{ db_pass }}"
+      no_log: true
+
+    - name: Instalacja cqlsh przez pip
+      ansible.builtin.pip:
+        name: cqlsh
+        state: present
+
+    - name: Ustawienie zmiennej CQLSH_NO_BUNDLED w .bashrc
+      ansible.builtin.lineinfile:
+        path: "~/.bashrc"
+        line: "export CQLSH_NO_BUNDLED=true"
+        create: yes
+        state: present
+        mode: '0644'
+
     - name: Wait for Cassandra to be ready after restart (up to 2 minutes)
       ansible.builtin.wait_for:
         port: 9042
-        host: "{{ ansible_host }}"
+        host: "{{ ansible_default_ipv4.address }}"
         delay: 30
         timeout: 120
-      delegate_to: localhost
 
     - name: Create the new superuser
-      ansible.builtin.command: "cqlsh {{ ansible_host }} -u cassandra -p cassandra -e \"CREATE USER IF NOT EXISTS '{{ db_user }}' WITH PASSWORD '{{ db_pass }}' SUPERUSER;\""
+      ansible.builtin.shell: "source ~/.bashrc && cqlsh {{ ansible_default_ipv4.address }} -u cassandra -p cassandra -e \"CREATE USER IF NOT EXISTS '{{ db_user }}' WITH PASSWORD '{{ db_pass }}' SUPERUSER;\""
+      args:
+        executable: /bin/bash
       changed_when: true
 
     - name: Disable the default 'cassandra' user
-      ansible.builtin.command: "cqlsh {{ ansible_host }} -u '{{ db_user }}' -p '{{ db_pass }}' -e \"ALTER USER cassandra WITH PASSWORD 'disabled-and-random-password-{{ 100000 | random }}' NOSUPERUSER NOLOGIN;\""
+      ansible.builtin.shell: "source ~/.bashrc && cqlsh {{ ansible_default_ipv4.address }} -u '{{ db_user }}' -p '{{ db_pass }}' -e \"ALTER USER cassandra WITH PASSWORD 'disabled-and-random-password-{{ 100000 | random }}' NOSUPERUSER;\""
+      args:
+        executable: /bin/bash
       changed_when: true
       ignore_errors: yes # Ignore errors if user 'cassandra' is already altered
+
+    - name: Utworzenie lokalnego pliku .env w głównym katalogu projektu
+      ansible.builtin.copy:
+        dest: "../../.env"
+        mode: '0755'
+        content: |
+          DATABASE_USER={{ hostvars[groups['database'][0]]['db_user_fact'] }}
+          DATABASE_PASSWORD={{ hostvars[groups['database'][0]]['db_pass_fact'] }}
+          CASSANDRA_NODE_IP={{ groups['database'] | map('extract', hostvars, ['ansible_default_ipv4', 'address']) | list | join(',') }}
+      delegate_to: localhost
+      run_once: true

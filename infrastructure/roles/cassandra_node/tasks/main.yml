@@ -54,6 +54,18 @@
     state: present
   tags: [ cassandra, cassandra-install ]
 
+- name: Instalacja pip dla Pythona 3
+  ansible.builtin.dnf:
+    name: python3-pip
+    state: present
+  tags: [ cassandra, cassandra-install ]
+
+- name: Instalacja sterownika Cassandra dla Pythona
+  ansible.builtin.pip:
+    name: cassandra-driver
+    state: present
+  tags: [ cassandra, cassandra-install ]
+
 - name: Instalacja chkconfig i initscripts (dla zarządzania usługami)
   ansible.builtin.dnf:
     name:
@@ -167,3 +179,10 @@
     name: cassandra
     state: started
   tags: [ cassandra, cassandra-service ]
+
+- name: Ustawienie PYTHONPATH dla cqlsh w całym systemie
+  ansible.builtin.copy:
+    content: "export PYTHONPATH=/usr/share/cassandra/pylib"
+    dest: /etc/profile.d/cassandra.sh
+    mode: '0644'
+  tags: [ cassandra, cassandra-configure ]

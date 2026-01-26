@@ -23,13 +23,13 @@ Projekt składa się z dedykowanych playbooków:
 │   ├── vm-playbook.yml
 │   ├── configure-cassandra-playbook.yml
 │   ├── configure-ftp-playbook.yml
-│   ├── create-schema-playbook.yml      # Nowy playbook do tworzenia schematu bazy danych
-│   ├── secure-cassandra-playbook.yml   # Nowy playbook do zabezpieczania klastra Cassandry
+│   ├── create-schema-playbook.yml
+│   ├── secure-cassandra-playbook.yml
 ├── inventory
 ├── README.md
 ├── roles/
 │   ├── cassandra_node/
-│   └── gcp_vm/                         # Zbędna rola gcp_vms została usunięta
+│   └── gcp_vm/
 ├── vars/
 │   └── main.yml
 │
@@ -105,7 +105,7 @@ Musisz podać publiczny adres IP nowej maszyny, który został dodany do `gcp_in
 
 ```bash
 # Zastąp <PUBLIC_IP_NOWEGO_WEZLA> adresem IP maszyny cassandra-node-4
-ansible-playbook -i gcp_inventory.ini playbooks/add-node-playbook.yml --limit <PUBLIC_IP_NOWEGO_WEZLA>
+ansible-playbook -i gcp_inventory.ini playbooks/add-node-playbook.yml --limit=<NAZWA_NOWEGO_WĘZŁA>
 ```
 
 **Jak to działa?**
