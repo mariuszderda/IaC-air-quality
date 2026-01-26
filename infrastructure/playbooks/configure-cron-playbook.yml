@@ -3,6 +3,11 @@
   hosts: ftp
   become: yes
   gather_facts: no
+  vars_prompt:
+    - name: "ftp_user"
+      prompt: "Enter the username of the FTP user to whose directory the reports will be copied"
+      default: "ftp_user"
+      private: no
 
   tasks:
     - name: Create necessary directories for ETL user
@@ -16,12 +21,27 @@
         - /home/databasecassandra/etl_reports
         - /home/databasecassandra/logs
 
-    - name: Copy ETL scripts to the remote host
+    - name: Copy ETL scripts and data to the remote host
       ansible.posix.synchronize:
-        src: ../../etl/
-        dest: /home/databasecassandra/etl/
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
         rsync_opts:
           - "--chown=databasecassandra:databasecassandra"
+      loop:
+        - { src: '../../etl/', dest: '/home/databasecassandra/etl/' }
+        - { src: '../../data/', dest: '/home/databasecassandra/data/' }
+
+    - name: Add ETL user to FTP group to allow writing reports
+      ansible.builtin.user:
+        name: databasecassandra
+        groups: "{{ ftp_user }}"
+        append: yes
+
+    - name: Ensure FTP upload directory has correct permissions for group writing
+      ansible.builtin.file:
+        path: "/home/{{ ftp_user }}/ftp/files"
+        state: directory
+        mode: '0775'
 
     - name: Schedule hourly data fetching job
       ansible.builtin.cron:
@@ -52,12 +72,20 @@
           '
         cron_file: etl_air_quality
 
-    - name: Schedule daily report generation job
+    - name: Schedule daily report generation and copy job
       ansible.builtin.cron:
         name: "ETL - Generate Daily PDF Report"
         minute: "0"
         hour: "6"
         user: databasecassandra
-        job: "bash -c 'source /home/databasecassandra/.bash_profile && jupyter nbconvert --execute /home/databasecassandra/etl/data_visualization.ipynb --to pdf --output air_quality_report_$(date +%Y-%m-%d).pdf --output-dir /home/databasecassandra/etl_reports >> /home/databasecassandra/logs/report_generation.log 2>&1'"
+        job: >
+          bash -c '
+          source /home/databasecassandra/.bash_profile &&
+          REPORT_DIR="/home/databasecassandra/etl_reports" &&
+          FTP_DIR="/home/{{ ftp_user }}/ftp/files" &&
+          REPORT_NAME="air_quality_report_$(date +\%Y-\%m-\%d).pdf" &&
+          jupyter nbconvert --execute /home/databasecassandra/etl/data_visualization.ipynb --to html --no-input --output-dir="$REPORT_DIR" --output="$REPORT_NAME" >> /home/databasecassandra/logs/report_generation.log 2>&1 &&
+          cp "$REPORT_DIR/$REPORT_NAME" "$FTP_DIR/"
+          '
         cron_file: etl_air_quality
 

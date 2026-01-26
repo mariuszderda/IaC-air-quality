@@ -3,10 +3,23 @@
   hosts: ftp
   become: yes
   gather_facts: yes
-
+  vars_prompt:
+    - name: "ftp_user"
+      prompt: "Enter the username for the FTP upload-only user"
+      default: "ftp_user"
+      private: no
+    - name: "ftp_password"
+      prompt: "Enter the password for the FTP user"
+      private: yes
 
   tasks:
-    # --- System and Build Dependencies ---
+    - name: Update all system packages
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        disable_gpg_check: yes
+
+    - name: Install system and build dependencies
       ansible.builtin.dnf:
         name:
           - java-21-openjdk-devel
@@ -25,14 +38,12 @@
           - tcl-devel
           - libffi-devel
           - xz-devel
-          - pandoc
           - texlive-xetex
-          - texlive-latex-base
-          - texlive-fonts-recommended
+          - texlive-latex
+          - texlive-collection-fontsrecommended
+          - vsftpd
+          - rsync # Dodano rsync
         state: present
-
-    
-
 
     - name: Install pyenv and Python for the 'databasecassandra' user
       become: yes
@@ -71,7 +82,7 @@
 
         - name: Install Python 3.8.18
           ansible.builtin.shell:
-            cmd: "source /home/{{ etl_user }}/.bash_profile && pyenv install 3.8.18"
+            cmd: "source /home/databasecassandra/.bash_profile && pyenv install 3.8.18"
             executable: /bin/bash
           when: python_38_installed.rc != 0
           async: 700
@@ -79,14 +90,14 @@
 
         - name: Set Python 3.8.18 as global default
           ansible.builtin.shell:
-            cmd: "source /home/{{ etl_user }}/.bash_profile && pyenv global 3.8.18"
+            cmd: "source /home/databasecassandra/.bash_profile && pyenv global 3.8.18"
             executable: /bin/bash
           changed_when: true
 
         - name: Install Python libraries for ETL using pyenv's pip
           ansible.builtin.shell:
             cmd: |
-              source /home/{{ etl_user }}/.bash_profile
+              source /home/databasecassandra/.bash_profile
               pip install \
                 pyspark==3.5.0 \
                 cassandra-driver==3.29.3 \
@@ -100,16 +111,21 @@
             executable: /bin/bash
           changed_when: true
 
+    - name: Copy ETL Scripts and .env file
+      block:
         - name: Kopiowanie skryptów ETL na host ETL
-          ansible.builtin.copy:
+          ansible.posix.synchronize:
             src: ../../etl/
-            dest: "/home/{{ etl_user }}/etl/"
-            owner: "{{ etl_user }}"
-            group: "{{ etl_user }}"
-            mode: '0755'
-          become: true
-          become_user: "{{ etl_user }}"
-          tags: [ etl-files ]
+            dest: "/home/databasecassandra/etl/"
+            rsync_opts:
+              - "--chown=databasecassandra:databasecassandra"
+
+        - name: Kopiowanie folderu data na host ETL
+          ansible.posix.synchronize:
+            src: ../../data/
+            dest: "/home/databasecassandra/data/"
+            rsync_opts:
+              - "--chown=databasecassandra:databasecassandra"
 
         - name: Sprawdź, czy lokalny plik .env istnieje
           ansible.builtin.stat:
@@ -129,94 +145,94 @@
             owner: "databasecassandra"
             group: "databasecassandra"
             mode: '0600'
-          tags: [ etl-files ]
           when: env_file_stat.stat.exists
 
-    # --- FTP Server and Upload-Only User Setup ---
-    - name: Install vsftpd
-      ansible.builtin.dnf:
-        name: vsftpd
-        state: present
+    - name: FTP Server and Upload-Only User Setup
+      block:
+        - name: Create FTP upload-only user with a nologin shell
+          ansible.builtin.user:
+            name: "{{ ftp_user }}"
+            password: "{{ ftp_password | password_hash('sha512') }}"
+            home: "/home/{{ ftp_user }}"
+            shell: /sbin/nologin
+            state: present
 
-    - name: Create FTP upload-only user with a nologin shell
-      ansible.builtin.user:
-        name: "{{ ftp_user }}"
-        password: "{{ ftp_password | password_hash('sha512') }}"
-        home: "/home/{{ ftp_user }}"
-        shell: /sbin/nologin
-        state: present
+        - name: Secure the FTP user's home directory (chroot jail)
+          ansible.builtin.file:
+            path: "/home/{{ ftp_user }}"
+            owner: root
+            group: root
+            mode: '0755'
 
-    - name: Create FTP root directory (chroot parent)
-      ansible.builtin.file:
-        path: "/home/{{ ftp_user }}/ftp"
-        state: directory
-        owner: root
-        group: root
-        mode: '0755'
+        - name: Create FTP root directory (chroot parent)
+          ansible.builtin.file:
+            path: "/home/{{ ftp_user }}/ftp"
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
 
-    - name: Create writable subdirectory for FTP user
-      ansible.builtin.file:
-        path: "/home/{{ ftp_user }}/ftp/files"
-        state: directory
-        owner: "{{ ftp_user }}"
-        group: "{{ ftp_user }}"
-        mode: '0755'
+        - name: Create writable subdirectory for FTP user
+          ansible.builtin.file:
+            path: "/home/{{ ftp_user }}/ftp/files"
+            state: directory
+            owner: "{{ ftp_user }}"
+            group: "{{ ftp_user }}"
+            mode: '0755'
 
-    - name: Configure vsftpd
-      ansible.builtin.blockinfile:
-        path: /etc/vsftpd/vsftpd.conf
-        block: |
-          anonymous_enable=NO
-          local_enable=YES
-          write_enable=YES
-          chroot_local_user=YES
-          pasv_enable=YES
-          pasv_min_port=21000
-          pasv_max_port=21010
-          pasv_addr_resolve=YES
-          pasv_address={{ ansible_default_ipv4.address }}
-          userlist_enable=YES
-          userlist_file=/etc/vsftpd/user_list
-          userlist_deny=NO
-        create: no
-        backup: yes
-      notify: restart vsftpd
+        - name: Configure vsftpd
+          ansible.builtin.blockinfile:
+            path: /etc/vsftpd/vsftpd.conf
+            block: |
+              anonymous_enable=NO
+              local_enable=YES
+              write_enable=YES
+              chroot_local_user=YES
+              pasv_enable=YES
+              pasv_min_port=21000
+              pasv_max_port=21010
+              pasv_addr_resolve=YES
+              pasv_address={{ ansible_default_ipv4.address }}
+              userlist_enable=YES
+              userlist_file=/etc/vsftpd/user_list
+              userlist_deny=NO
+            create: no
+            backup: yes
+          notify: restart vsftpd
 
-    - name: Ensure /sbin/nologin is in /etc/shells for vsftpd
-      ansible.builtin.lineinfile:
-        path: /etc/shells
-        line: /sbin/nologin
-        state: present
-        create: yes
+        - name: Ensure /sbin/nologin is in /etc/shells for vsftpd
+          ansible.builtin.lineinfile:
+            path: /etc/shells
+            line: /sbin/nologin
+            state: present
+            create: yes
 
-    - name: Add FTP user to the allowed user list
-      ansible.builtin.lineinfile:
-        path: /etc/vsftpd/user_list
-        line: "{{ ftp_user }}"
-        create: yes
-        state: present
+        - name: Add FTP user to the allowed user list
+          ansible.builtin.lineinfile:
+            path: /etc/vsftpd/user_list
+            line: "{{ ftp_user }}"
+            create: yes
+            state: present
 
-    - name: Configure firewalld for FTP
-      ansible.posix.firewalld:
-        service: ftp
-        permanent: yes
-        state: enabled
-        immediate: yes
+        - name: Configure firewalld for FTP
+          ansible.posix.firewalld:
+            service: ftp
+            permanent: yes
+            state: enabled
+            immediate: yes
 
-    - name: Configure firewalld for passive FTP ports
-      ansible.posix.firewalld:
-        port: 21000-21010/tcp
-        permanent: yes
-        state: enabled
-        immediate: yes
+        - name: Configure firewalld for passive FTP ports
+          ansible.posix.firewalld:
+            port: 21000-21010/tcp
+            permanent: yes
+            state: enabled
+            immediate: yes
 
-    - name: Enable and start vsftpd service
-      ansible.builtin.service:
-        name: vsftpd
-        enabled: yes
-        state: started
-
-
+        - name: Enable and start vsftpd service
+          ansible.builtin.service:
+            name: vsftpd
+            enabled: yes
+            state: started
 
   handlers:
     - name: restart vsftpd
